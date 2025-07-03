@@ -1,0 +1,44 @@
+[package]
+name = "codex-vault-app"
+version = "0.1.0"
+description = "Codex Vault Next-Gen - Offline AI-powered knowledge repository"
+authors = ["HANATRA LIMITED"]
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "codex_vault_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri framework
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-opener = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+
+# Core library integration
+codex-core = { path = "../codex-core" }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# UUID support
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
