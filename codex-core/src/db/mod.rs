@@ -3,7 +3,6 @@
 //! This module provides SQLite database operations with optimized performance
 //! for full-text search and vector embeddings.
 
-use std::sync::Arc;
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions, migrate::MigrateDatabase, Sqlite};
 use anyhow::Result;
 use tracing::{info, debug, error};
@@ -47,7 +46,7 @@ impl DatabaseManager {
         // Create connection pool
         let pool = SqlitePoolOptions::new()
             .max_connections(config.max_connections)
-            .connect_timeout(std::time::Duration::from_secs(config.connection_timeout))
+            .acquire_timeout(std::time::Duration::from_secs(config.connection_timeout))
             .connect(&database_url)
             .await?;
 

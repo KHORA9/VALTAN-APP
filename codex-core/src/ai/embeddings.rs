@@ -1,10 +1,9 @@
 //! Text embedding generation for semantic search
 
-use std::sync::Arc;
 use anyhow::Result;
 use tracing::{info, debug};
 
-use crate::{CodexError, CodexResult};
+use crate::CodexResult;
 use crate::config::AiConfig;
 
 /// Text embedding engine for generating vector representations
@@ -120,16 +119,16 @@ impl EmbeddingEngine {
     /// Find most similar embeddings to a query embedding
     pub fn find_similar(
         &self,
-        query_embedding: &[f32],
-        embeddings: &[(uuid::Uuid, Vec<f32>)],
+        query_vector: &[f32],
+        embeddings: &[(String, Vec<f32>)],
         top_k: usize,
     ) -> Vec<SimilarityResult> {
         let mut similarities: Vec<SimilarityResult> = embeddings
             .iter()
             .map(|(id, embedding)| {
-                let similarity = self.cosine_similarity(query_embedding, embedding);
+                let similarity = self.cosine_similarity(query_vector, embedding);
                 SimilarityResult {
-                    document_id: *id,
+                    document_id: id.clone(),
                     similarity_score: similarity,
                 }
             })
@@ -249,7 +248,7 @@ pub struct ChunkEmbedding {
 /// Similarity search result
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimilarityResult {
-    pub document_id: uuid::Uuid,
+    pub document_id: String,
     pub similarity_score: f32,
 }
 

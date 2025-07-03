@@ -1,22 +1,82 @@
 //! Database connection utilities and helpers
 
-use sqlx::{SqlitePool, Row};
-use anyhow::Result;
-use uuid::Uuid;
+use sqlx::{SqlitePool, Row, sqlite::{SqlitePoolOptions, SqliteConnectOptions}};
+use anyhow::Context;
+use std::time::Duration;
 
 use crate::CodexResult;
 
 /// Database connection utilities
 pub struct ConnectionUtils;
 
+/// Database connection pool configuration
+#[derive(Debug, Clone)]
+pub struct PoolConfig {
+    pub max_connections: u32,
+    pub min_connections: u32,
+    pub acquire_timeout: Duration,
+    pub idle_timeout: Duration,
+    pub max_lifetime: Duration,
+}
+
+impl PoolConfig {
+    /// Create default pool configuration
+    pub fn default() -> Self {
+        Self {
+            max_connections: 10,
+            min_connections: 2,
+            acquire_timeout: Duration::from_secs(30),
+            idle_timeout: Duration::from_secs(600), // 10 minutes
+            max_lifetime: Duration::from_secs(1800), // 30 minutes
+        }
+    }
+
+    /// Create pool configuration optimized for desktop app
+    pub fn desktop_optimized() -> Self {
+        Self {
+            max_connections: 5,
+            min_connections: 1,
+            acquire_timeout: Duration::from_secs(10),
+            idle_timeout: Duration::from_secs(300), // 5 minutes
+            max_lifetime: Duration::from_secs(900), // 15 minutes
+        }
+    }
+}
+
 impl ConnectionUtils {
+    /// Create a properly configured SQLite connection pool
+    pub async fn create_pool(database_url: &str, config: PoolConfig) -> CodexResult<SqlitePool> {
+        let connect_options = SqliteConnectOptions::new()
+            .filename(database_url)
+            .create_if_missing(true)
+            .pragma("foreign_keys", "true")
+            .pragma("journal_mode", "WAL")
+            .pragma("synchronous", "NORMAL")
+            .pragma("cache_size", "-64000") // 64MB cache
+            .pragma("temp_store", "memory")
+            .pragma("mmap_size", "268435456"); // 256MB mmap
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(config.max_connections)
+            .min_connections(config.min_connections)
+            .acquire_timeout(config.acquire_timeout)
+            .idle_timeout(config.idle_timeout)
+            .max_lifetime(config.max_lifetime)
+            .test_before_acquire(true)
+            .connect_with(connect_options)
+            .await
+            .context("Failed to create database connection pool")?;
+
+        Ok(pool)
+    }
     /// Check if database tables exist
     pub async fn tables_exist(pool: &SqlitePool) -> CodexResult<bool> {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('documents', 'embeddings', 'settings')"
         )
         .fetch_one(pool)
-        .await?;
+        .await
+        .context("Failed to check if database tables exist")?;
 
         Ok(count >= 3)
     }
@@ -27,7 +87,8 @@ impl ConnectionUtils {
             "SELECT value FROM settings WHERE key = 'schema_version'"
         )
         .fetch_optional(pool)
-        .await?;
+        .await
+        .context("Failed to get database schema version")?;
 
         Ok(version.flatten())
     }
@@ -39,14 +100,32 @@ impl ConnectionUtils {
             version
         )
         .execute(pool)
-        .await?;
+        .await
+        .context("Failed to set database schema version")?;
 
         Ok(())
     }
 
-    /// Execute raw SQL query (for maintenance operations)
+    /// Execute raw SQL query (for maintenance operations only)
+    /// SECURITY: Only allows specific maintenance operations to prevent SQL injection
     pub async fn execute_raw(pool: &SqlitePool, sql: &str) -> CodexResult<u64> {
-        let result = sqlx::query(sql).execute(pool).await?;
+        // Security check: only allow specific maintenance operations
+        let sql_trimmed = sql.trim().to_uppercase();
+        let allowed_operations = [
+            "PRAGMA", "VACUUM", "REINDEX", "ANALYZE", 
+            "DELETE FROM documents_fts", "INSERT INTO documents_fts"
+        ];
+        
+        let is_allowed = allowed_operations.iter().any(|op| sql_trimmed.starts_with(op));
+        
+        if !is_allowed {
+            return Err(crate::CodexError::validation(
+                "Raw SQL execution only allowed for specific maintenance operations"
+            ));
+        }
+        
+        let result = sqlx::query(sql).execute(pool).await
+            .with_context(|| format!("Failed to execute raw SQL: {}", sql))?;
         Ok(result.rows_affected())
     }
 
@@ -59,7 +138,8 @@ impl ConnectionUtils {
             "SELECT COUNT(*) FROM embeddings e LEFT JOIN documents d ON e.document_id = d.id WHERE d.id IS NULL"
         )
         .fetch_one(pool)
-        .await?;
+        .await
+        .context("Failed to check orphaned embeddings")?;
 
         if orphaned_embeddings > 0 {
             errors.push(format!("Found {} orphaned embeddings", orphaned_embeddings));
@@ -70,7 +150,8 @@ impl ConnectionUtils {
             "SELECT COUNT(*) FROM document_collections dc LEFT JOIN documents d ON dc.document_id = d.id WHERE d.id IS NULL"
         )
         .fetch_one(pool)
-        .await?;
+        .await
+        .context("Failed to check orphaned document-collection relationships")?;
 
         if orphaned_doc_collections > 0 {
             errors.push(format!("Found {} orphaned document-collection links", orphaned_doc_collections));

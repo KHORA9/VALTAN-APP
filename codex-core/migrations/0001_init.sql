@@ -2,8 +2,6 @@
 -- Version: 0001
 -- Description: Create core tables for documents, embeddings, settings, and user data
 
--- Enable foreign key constraints
-PRAGMA foreign_keys = ON;
 
 -- =====================================================
 -- CORE CONTENT TABLES
@@ -56,9 +54,7 @@ CREATE VIRTUAL TABLE documents_fts USING fts5(
     summary,
     author,
     category,
-    tags,
-    content_tokens='porter',
-    tokenize='porter unicode61 remove_diacritics 1'
+    tags
 );
 
 -- Trigger to keep FTS5 index in sync with documents table
@@ -265,13 +261,3 @@ VALUES
 -- Create indexes for performance optimization after all inserts
 ANALYZE;
 
--- =====================================================
--- PERFORMANCE OPTIMIZATIONS
--- =====================================================
-
--- Optimize SQLite settings for our use case
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA cache_size = -64000;  -- 64MB cache
-PRAGMA temp_store = MEMORY;
-PRAGMA mmap_size = 268435456;  -- 256MB mmap

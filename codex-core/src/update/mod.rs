@@ -1,17 +1,20 @@
 //! Application update management module
 
-use std::sync::Arc;
 use anyhow::Result;
-use tracing::{info, debug, warn, error};
+use tracing::{info, debug, warn};
 
 use crate::{CodexError, CodexResult};
 use crate::config::UpdateConfig;
 
 pub mod manager;
 pub mod manifest;
-
+pub mod downloader;
+pub mod model_downloader;
 pub use manager::*;
 pub use manifest::*;
+// Import specific items to avoid name conflicts
+pub use downloader::{ModelDownloader as OriginalModelDownloader, DownloadResult, DownloadProgress as OriginalDownloadProgress};
+pub use model_downloader::{ModelDownloader, DownloadProgress, DownloadStage};
 
 /// Update manager for handling application updates
 #[derive(Debug)]

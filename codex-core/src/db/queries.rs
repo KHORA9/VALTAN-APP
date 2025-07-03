@@ -1,9 +1,7 @@
 //! Database query operations for Codex Core
 
 use sqlx::{SqlitePool, Row};
-use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use anyhow::Result;
+use chrono::Utc;
 
 use crate::{CodexError, CodexResult};
 use super::models::*;
@@ -14,7 +12,7 @@ pub struct DocumentQueries;
 impl DocumentQueries {
     /// Create a new document
     pub async fn create(pool: &SqlitePool, document: &Document) -> CodexResult<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO documents (
                 id, title, content, summary, author, source, url, content_type,
@@ -23,46 +21,75 @@ impl DocumentQueries {
                 view_count, is_favorite, is_archived, is_deleted
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
-            document.id,
-            document.title,
-            document.content,
-            document.summary,
-            document.author,
-            document.source,
-            document.url,
-            document.content_type,
-            document.category,
-            document.tags,
-            document.language,
-            document.reading_time,
-            document.difficulty_level,
-            document.file_size,
-            document.file_hash,
-            document.created_at,
-            document.updated_at,
-            document.last_accessed,
-            document.view_count,
-            document.is_favorite,
-            document.is_archived,
-            document.is_deleted
         )
+        .bind(&document.id)
+        .bind(&document.title)
+        .bind(&document.content)
+        .bind(&document.summary)
+        .bind(&document.author)
+        .bind(&document.source)
+        .bind(&document.url)
+        .bind(&document.content_type)
+        .bind(&document.category)
+        .bind(&document.tags)
+        .bind(&document.language)
+        .bind(document.reading_time)
+        .bind(document.difficulty_level)
+        .bind(document.file_size)
+        .bind(&document.file_hash)
+        .bind(&document.created_at)
+        .bind(&document.updated_at)
+        .bind(&document.last_accessed)
+        .bind(document.view_count)
+        .bind(document.is_favorite)
+        .bind(document.is_archived)
+        .bind(document.is_deleted)
         .execute(pool)
-        .await?;
+        .await
+        .map_err(|e| CodexError::Database(e))?;
 
         Ok(())
     }
 
     /// Get document by ID
-    pub async fn get_by_id(pool: &SqlitePool, id: Uuid) -> CodexResult<Option<Document>> {
-        let document = sqlx::query_as!(
-            Document,
-            "SELECT * FROM documents WHERE id = ? AND is_deleted = false",
-            id
+    pub async fn get_by_id(pool: &SqlitePool, id: &str) -> CodexResult<Option<Document>> {
+        let row = sqlx::query(
+            "SELECT * FROM documents WHERE id = ? AND is_deleted = false"
         )
+        .bind(id)
         .fetch_optional(pool)
-        .await?;
+        .await
+        .map_err(|e| CodexError::Database(e))?;
 
-        Ok(document)
+        if let Some(row) = row {
+            let document = Document {
+                id: row.get("id"),
+                title: row.get("title"),
+                content: row.get("content"),
+                summary: row.get("summary"),
+                author: row.get("author"),
+                source: row.get("source"),
+                url: row.get("url"),
+                content_type: row.get("content_type"),
+                category: row.get("category"),
+                tags: row.get("tags"),
+                language: row.get("language"),
+                reading_time: row.get("reading_time"),
+                difficulty_level: row.get("difficulty_level"),
+                file_size: row.get("file_size"),
+                file_hash: row.get("file_hash"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                last_accessed: row.get("last_accessed"),
+                view_count: row.get("view_count"),
+                is_favorite: row.get("is_favorite"),
+                is_archived: row.get("is_archived"),
+                is_deleted: row.get("is_deleted"),
+            };
+            Ok(Some(document))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Update document
@@ -108,7 +135,7 @@ impl DocumentQueries {
     }
 
     /// Delete document (soft delete)
-    pub async fn delete(pool: &SqlitePool, id: Uuid) -> CodexResult<()> {
+    pub async fn delete(pool: &SqlitePool, id: &str) -> CodexResult<()> {
         let updated_at = Utc::now();
         
         sqlx::query!(
@@ -133,9 +160,10 @@ impl DocumentQueries {
             Document,
             r#"
             SELECT d.* FROM documents d
-            JOIN documents_fts fts ON d.id = fts.rowid
-            WHERE fts MATCH ? AND d.is_deleted = false
-            ORDER BY rank
+            WHERE d.rowid IN (
+                SELECT rowid FROM documents_fts WHERE documents_fts MATCH ?
+            ) AND d.is_deleted = false
+            ORDER BY d.created_at DESC
             LIMIT ? OFFSET ?
             "#,
             query,
@@ -210,7 +238,7 @@ impl DocumentQueries {
     }
 
     /// Update view count and last accessed
-    pub async fn update_access(pool: &SqlitePool, id: Uuid) -> CodexResult<()> {
+    pub async fn update_access(pool: &SqlitePool, id: &str) -> CodexResult<()> {
         let now = Utc::now();
         
         sqlx::query!(
@@ -262,7 +290,7 @@ impl EmbeddingQueries {
     /// Get embeddings for a document
     pub async fn get_by_document(
         pool: &SqlitePool,
-        document_id: Uuid,
+        document_id: &str,
     ) -> CodexResult<Vec<Embedding>> {
         let embeddings = sqlx::query_as!(
             Embedding,
@@ -276,7 +304,7 @@ impl EmbeddingQueries {
     }
 
     /// Delete embeddings for a document
-    pub async fn delete_by_document(pool: &SqlitePool, document_id: Uuid) -> CodexResult<()> {
+    pub async fn delete_by_document(pool: &SqlitePool, document_id: &str) -> CodexResult<()> {
         sqlx::query!(
             "DELETE FROM embeddings WHERE document_id = ?",
             document_id
@@ -288,7 +316,7 @@ impl EmbeddingQueries {
     }
 
     /// Get all embeddings for similarity search
-    pub async fn get_all_vectors(pool: &SqlitePool) -> CodexResult<Vec<(Uuid, Vec<f32>)>> {
+    pub async fn get_all_vectors(pool: &SqlitePool) -> CodexResult<Vec<(String, Vec<f32>)>> {
         let rows = sqlx::query!(
             "SELECT document_id, vector FROM embeddings ORDER BY document_id, chunk_index"
         )
@@ -399,7 +427,7 @@ impl BookmarkQueries {
     /// Get bookmarks for a document
     pub async fn get_by_document(
         pool: &SqlitePool,
-        document_id: Uuid,
+        document_id: &str,
     ) -> CodexResult<Vec<Bookmark>> {
         let bookmarks = sqlx::query_as!(
             Bookmark,
@@ -426,7 +454,7 @@ impl BookmarkQueries {
     }
 
     /// Delete bookmark
-    pub async fn delete(pool: &SqlitePool, id: Uuid) -> CodexResult<()> {
+    pub async fn delete(pool: &SqlitePool, id: &str) -> CodexResult<()> {
         sqlx::query!("DELETE FROM bookmarks WHERE id = ?", id)
             .execute(pool)
             .await?;

@@ -8,7 +8,7 @@ use tracing::{info, debug};
 use crate::{CodexError, CodexResult};
 use crate::config::AiConfig;
 use crate::db::DatabaseManager;
-use super::{InferenceEngine, EmbeddingEngine, RagResponse, RagSource};
+use super::{InferenceEngine, EmbeddingEngine};
 
 /// RAG engine for contextual AI responses
 pub struct RagEngine {
@@ -49,12 +49,30 @@ impl Default for RagConfig {
     }
 }
 
+/// Response from RAG query
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RagResponse {
+    pub answer: String,
+    pub sources: Vec<RagSource>,
+    pub confidence: f32,
+    pub context_used: usize,
+}
+
+/// Source information for RAG response
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RagSource {
+    pub document_id: uuid::Uuid,
+    pub title: String,
+    pub snippet: String,
+    pub relevance_score: f32,
+}
+
 impl RagEngine {
     /// Create a new RAG engine
     pub async fn new(
         inference: Arc<RwLock<InferenceEngine>>,
         embeddings: Arc<EmbeddingEngine>,
-        config: &AiConfig,
+        _config: &AiConfig,
     ) -> Result<Self> {
         info!("Initializing RAG engine");
 
@@ -136,13 +154,13 @@ impl RagEngine {
                 // Get document details
                 if let Ok(Some(document)) = crate::db::DocumentQueries::get_by_id(
                     db.pool(),
-                    similarity.document_id,
+                    similarity.document_id.as_str(),
                 ).await {
                     // Extract relevant snippet
                     let snippet = self.extract_relevant_snippet(&document.content, query_embedding).await?;
 
                     sources.push(RagSource {
-                        document_id: document.id,
+                        document_id: uuid::Uuid::parse_str(&document.id).unwrap_or_default(),
                         title: document.title,
                         snippet,
                         relevance_score: similarity.similarity_score,
@@ -243,7 +261,18 @@ impl RagEngine {
         );
 
         let inference = self.inference.read().await;
-        let config = crate::config::AiConfig::default(); // Use default config for now
+        // Use minimal config for now
+        let config = crate::config::AiConfig {
+            models_dir: std::path::PathBuf::from("models"),
+            primary_model: "model.gguf".to_string(),
+            max_context_length: 4096,
+            temperature: 0.7,
+            top_p: 0.95,
+            max_tokens: 512,
+            device: "cpu".to_string(),
+            enable_caching: true,
+            cache_size_mb: 512,
+        };
         inference.generate(&prompt, &config).await
     }
 
@@ -274,7 +303,7 @@ impl RagEngine {
         let mut titles = Vec::new();
 
         for doc_id in document_ids {
-            if let Ok(Some(document)) = crate::db::DocumentQueries::get_by_id(db.pool(), *doc_id).await {
+            if let Ok(Some(document)) = crate::db::DocumentQueries::get_by_id(db.pool(), &doc_id.to_string()).await {
                 titles.push(document.title.clone());
                 combined_content.push_str(&format!("\n\n# {}\n{}", document.title, document.content));
             }
@@ -291,7 +320,17 @@ impl RagEngine {
         );
 
         let inference = self.inference.read().await;
-        let config = crate::config::AiConfig::default();
+        let config = crate::config::AiConfig {
+            models_dir: std::path::PathBuf::from("models"),
+            primary_model: "model.gguf".to_string(),
+            max_context_length: 4096,
+            temperature: 0.7,
+            top_p: 0.95,
+            max_tokens: 512,
+            device: "cpu".to_string(),
+            enable_caching: true,
+            cache_size_mb: 512,
+        };
         inference.generate(&prompt, &config).await
     }
 
@@ -304,7 +343,7 @@ impl RagEngine {
         let mut documents_content = Vec::new();
 
         for doc_id in document_ids {
-            if let Ok(Some(document)) = crate::db::DocumentQueries::get_by_id(db.pool(), *doc_id).await {
+            if let Ok(Some(document)) = crate::db::DocumentQueries::get_by_id(db.pool(), &doc_id.to_string()).await {
                 documents_content.push(format!("Document: {}\nContent: {}", document.title, document.content));
             }
         }
@@ -320,7 +359,17 @@ impl RagEngine {
         );
 
         let inference = self.inference.read().await;
-        let config = crate::config::AiConfig::default();
+        let config = crate::config::AiConfig {
+            models_dir: std::path::PathBuf::from("models"),
+            primary_model: "model.gguf".to_string(),
+            max_context_length: 4096,
+            temperature: 0.7,
+            top_p: 0.95,
+            max_tokens: 512,
+            device: "cpu".to_string(),
+            enable_caching: true,
+            cache_size_mb: 512,
+        };
         inference.generate(&prompt, &config).await
     }
 

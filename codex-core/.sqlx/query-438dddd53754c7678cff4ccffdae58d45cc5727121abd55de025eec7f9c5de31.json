@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE documents SET\n                title = ?, content = ?, summary = ?, author = ?, source = ?,\n                url = ?, content_type = ?, category = ?, tags = ?, language = ?,\n                reading_time = ?, difficulty_level = ?, file_size = ?, file_hash = ?,\n                updated_at = ?, last_accessed = ?, view_count = ?, is_favorite = ?,\n                is_archived = ?, is_deleted = ?\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 21
+    },
+    "nullable": []
+  },
+  "hash": "438dddd53754c7678cff4ccffdae58d45cc5727121abd55de025eec7f9c5de31"
+}

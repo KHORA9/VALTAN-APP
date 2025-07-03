@@ -1,10 +1,9 @@
 //! Update manager implementation
 
 use std::path::PathBuf;
-use anyhow::Result;
 use tracing::{info, debug, warn};
 
-use crate::{CodexError, CodexResult};
+use crate::CodexResult;
 
 /// Update manager for handling application lifecycle
 pub struct UpdateLifecycleManager {

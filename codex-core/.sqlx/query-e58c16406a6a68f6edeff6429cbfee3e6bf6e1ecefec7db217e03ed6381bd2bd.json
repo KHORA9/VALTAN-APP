@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE documents\n            SET view_count = view_count + 1, last_accessed = ?\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "e58c16406a6a68f6edeff6429cbfee3e6bf6e1ecefec7db217e03ed6381bd2bd"
+}

@@ -59,6 +59,14 @@ pub enum CodexError {
     /// Migration errors
     #[error("Migration error: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),
+
+    /// Model verification errors
+    #[error("Model verification error: {0}")]
+    ModelVerification(String),
+
+    /// Checksum verification errors
+    #[error("Checksum verification failed: {0}")]
+    ChecksumVerification(String),
 }
 
 impl CodexError {
@@ -120,5 +128,31 @@ impl CodexError {
     /// Check if this is a validation error
     pub fn is_validation_error(&self) -> bool {
         matches!(self, Self::Validation(_))
+    }
+
+    /// Create a new model verification error
+    pub fn model_verification<S: Into<String>>(msg: S) -> Self {
+        Self::ModelVerification(msg.into())
+    }
+
+    /// Create a new checksum verification error
+    pub fn checksum_verification<S: Into<String>>(msg: S) -> Self {
+        Self::ChecksumVerification(msg.into())
+    }
+
+    /// Create a new network error from a reqwest error
+    pub fn network(err: reqwest::Error) -> Self {
+        Self::Network(err)
+    }
+
+    /// Create a new I/O error
+    pub fn io(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl From<anyhow::Error> for CodexError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Internal(err.to_string())
     }
 }

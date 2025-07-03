@@ -6,18 +6,23 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use anyhow::Result;
-use tracing::{info, debug, error, warn};
+use tracing::{info, error};
 
-use crate::{CodexError, CodexResult};
+use crate::CodexResult;
 use crate::config::AiConfig;
 
 pub mod inference;
 pub mod embeddings;
 pub mod rag;
+pub mod engine;
 
-pub use inference::*;
-pub use embeddings::*;
-pub use rag::*;
+pub use inference::{InferenceEngine};
+pub use embeddings::{EmbeddingEngine, ChunkEmbedding};
+pub use rag::{RagEngine, RagConfig, RagResponse, RagSource};
+pub use engine::{EngineFactory, EngineType, EngineParams, GenerationSettings, LLMEngine, GGUFEngine, HuggingFaceEngine, RemoteEngine};
+
+// Re-export ModelInfo from engine to avoid conflicts
+pub use engine::ModelInfo as EngineModelInfo;
 
 /// AI engine managing all AI-related operations
 #[derive(Debug)]
@@ -248,6 +253,11 @@ impl AiEngine {
         Ok(())
     }
 
+    /// Get reference to embeddings engine
+    pub fn get_embeddings(&self) -> &Arc<EmbeddingEngine> {
+        &self.embeddings
+    }
+
     /// Shutdown the AI engine
     pub async fn shutdown(&self) -> CodexResult<()> {
         info!("Shutting down AI engine");
@@ -275,23 +285,6 @@ pub struct AiStats {
     pub uptime_seconds: u64,
 }
 
-/// Response from RAG query
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct RagResponse {
-    pub answer: String,
-    pub sources: Vec<RagSource>,
-    pub confidence: f32,
-    pub context_used: usize,
-}
-
-/// Source information for RAG response
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct RagSource {
-    pub document_id: uuid::Uuid,
-    pub title: String,
-    pub snippet: String,
-    pub relevance_score: f32,
-}
 
 #[cfg(test)]
 mod tests {

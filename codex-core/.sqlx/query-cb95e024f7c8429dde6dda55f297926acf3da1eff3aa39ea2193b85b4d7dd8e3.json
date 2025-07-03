@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT OR REPLACE INTO settings (\n                key, value, description, category, is_user_configurable, created_at, updated_at\n            ) VALUES (?, ?, ?, ?, ?, ?, ?)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "cb95e024f7c8429dde6dda55f297926acf3da1eff3aa39ea2193b85b4d7dd8e3"
+}

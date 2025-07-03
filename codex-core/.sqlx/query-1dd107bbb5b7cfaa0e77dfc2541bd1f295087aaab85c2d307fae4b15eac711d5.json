@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT document_id, vector FROM embeddings ORDER BY document_id, chunk_index",
+  "describe": {
+    "columns": [
+      {
+        "name": "document_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "vector",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "1dd107bbb5b7cfaa0e77dfc2541bd1f295087aaab85c2d307fae4b15eac711d5"
+}

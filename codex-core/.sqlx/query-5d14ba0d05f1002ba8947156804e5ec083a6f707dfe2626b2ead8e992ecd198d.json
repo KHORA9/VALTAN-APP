@@ -1,0 +1,146 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT * FROM documents\n            WHERE is_deleted = false\n            ORDER BY created_at DESC\n            LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "title",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "summary",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "author",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "source",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "url",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "content_type",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "category",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "tags",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "language",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "reading_time",
+        "ordinal": 11,
+        "type_info": "Int64"
+      },
+      {
+        "name": "difficulty_level",
+        "ordinal": 12,
+        "type_info": "Int64"
+      },
+      {
+        "name": "file_size",
+        "ordinal": 13,
+        "type_info": "Int64"
+      },
+      {
+        "name": "file_hash",
+        "ordinal": 14,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 15,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 16,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_accessed",
+        "ordinal": 17,
+        "type_info": "Text"
+      },
+      {
+        "name": "view_count",
+        "ordinal": 18,
+        "type_info": "Int64"
+      },
+      {
+        "name": "is_favorite",
+        "ordinal": 19,
+        "type_info": "Bool"
+      },
+      {
+        "name": "is_archived",
+        "ordinal": 20,
+        "type_info": "Bool"
+      },
+      {
+        "name": "is_deleted",
+        "ordinal": 21,
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5d14ba0d05f1002ba8947156804e5ec083a6f707dfe2626b2ead8e992ecd198d"
+}
