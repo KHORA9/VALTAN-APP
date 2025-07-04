@@ -14,11 +14,15 @@ pub mod models;
 pub mod queries;
 pub mod connection;
 pub mod seeder;
+pub mod search;
+pub mod vector_ops;
 
 pub use models::*;
 pub use queries::*;
 pub use connection::*;
 pub use seeder::*;
+pub use search::*;
+pub use vector_ops::*;
 
 /// Database manager handling all SQLite operations
 #[derive(Debug)]

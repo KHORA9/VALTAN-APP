@@ -1,11 +1,184 @@
 //! Database query operations for Codex Core
 
-use sqlx::{SqlitePool, Row, query, query_as, query_scalar};
-use sqlx::sqlite::SqliteRow;
+use sqlx::{SqlitePool, Row, Sqlite, Statement};
 use chrono::Utc;
+use std::collections::HashMap;
 
 use crate::{CodexError, CodexResult};
 use super::models::*;
+
+/// Prepared statement manager for high-performance database operations
+pub struct PreparedStatements {
+    statements: HashMap<String, Statement<'static, Sqlite>>,
+}
+
+impl PreparedStatements {
+    /// Create a new prepared statements manager
+    pub async fn new(pool: &SqlitePool) -> CodexResult<Self> {
+        let mut statements = HashMap::new();
+        
+        // Document queries
+        statements.insert(
+            "document_search_fts".to_string(),
+            pool.prepare(
+                r#"
+                SELECT d.* FROM documents d
+                JOIN documents_fts fts ON d.rowid = fts.rowid
+                WHERE fts MATCH ? AND d.is_deleted = false
+                ORDER BY rank
+                LIMIT ?
+                "#
+            ).await.map_err(CodexError::from)?
+        );
+        
+        statements.insert(
+            "document_search_ranked".to_string(),
+            pool.prepare(
+                r#"
+                SELECT d.*, 
+                       bm25(documents_fts, 10.0, 5.0, 1.0, 1.0, 3.0, 2.0) as rank_score
+                FROM documents d
+                JOIN documents_fts fts ON d.rowid = fts.rowid
+                WHERE fts MATCH ? AND d.is_deleted = false
+                ORDER BY rank_score DESC
+                LIMIT ? OFFSET ?
+                "#
+            ).await.map_err(CodexError::from)?
+        );
+        
+        statements.insert(
+            "document_by_id".to_string(),
+            pool.prepare(
+                "SELECT * FROM documents WHERE id = ? AND is_deleted = false"
+            ).await.map_err(CodexError::from)?
+        );
+        
+        statements.insert(
+            "document_by_category".to_string(),
+            pool.prepare(
+                r#"
+                SELECT * FROM documents
+                WHERE category = ? AND is_deleted = false
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                "#
+            ).await.map_err(CodexError::from)?
+        );
+        
+        statements.insert(
+            "document_recent".to_string(),
+            pool.prepare(
+                r#"
+                SELECT * FROM documents
+                WHERE is_deleted = false
+                ORDER BY created_at DESC
+                LIMIT ?
+                "#
+            ).await.map_err(CodexError::from)?
+        );
+        
+        statements.insert(
+            "document_favorites".to_string(),
+            pool.prepare(
+                r#"
+                SELECT * FROM documents
+                WHERE is_favorite = true AND is_deleted = false
+                ORDER BY updated_at DESC
+                LIMIT ?
+                "#
+            ).await.map_err(CodexError::from)?
+        );
+        
+        statements.insert(
+            "document_update_access".to_string(),
+            pool.prepare(
+                r#"
+                UPDATE documents
+                SET view_count = view_count + 1, last_accessed = ?
+                WHERE id = ?
+                "#
+            ).await.map_err(CodexError::from)?
+        );
+        
+        // Embedding queries
+        statements.insert(
+            "embedding_by_document".to_string(),
+            pool.prepare(
+                "SELECT * FROM embeddings WHERE document_id = ? ORDER BY chunk_index"
+            ).await.map_err(CodexError::from)?
+        );
+        
+        statements.insert(
+            "embedding_all_vectors".to_string(),
+            pool.prepare(
+                "SELECT document_id, vector FROM embeddings ORDER BY document_id, chunk_index"
+            ).await.map_err(CodexError::from)?
+        );
+        
+        // Search history queries
+        statements.insert(
+            "search_history_insert".to_string(),
+            pool.prepare(
+                r#"
+                INSERT INTO search_history (id, query, search_type, result_count, searched_at)
+                VALUES (?, ?, ?, ?, ?)
+                "#
+            ).await.map_err(CodexError::from)?
+        );
+        
+        statements.insert(
+            "search_history_recent".to_string(),
+            pool.prepare(
+                r#"
+                SELECT DISTINCT query FROM search_history
+                WHERE search_type = ?
+                ORDER BY searched_at DESC
+                LIMIT ?
+                "#
+            ).await.map_err(CodexError::from)?
+        );
+        
+        // Settings queries
+        statements.insert(
+            "setting_get".to_string(),
+            pool.prepare("SELECT * FROM settings WHERE key = ?").await.map_err(CodexError::from)?
+        );
+        
+        statements.insert(
+            "setting_by_category".to_string(),
+            pool.prepare(
+                "SELECT * FROM settings WHERE category = ? ORDER BY key"
+            ).await.map_err(CodexError::from)?
+        );
+        
+        // Bookmark queries
+        statements.insert(
+            "bookmark_by_document".to_string(),
+            pool.prepare(
+                "SELECT * FROM bookmarks WHERE document_id = ? ORDER BY position"
+            ).await.map_err(CodexError::from)?
+        );
+        
+        statements.insert(
+            "bookmark_all".to_string(),
+            pool.prepare(
+                "SELECT * FROM bookmarks ORDER BY created_at DESC LIMIT ?"
+            ).await.map_err(CodexError::from)?
+        );
+        
+        Ok(Self { statements })
+    }
+    
+    /// Get a prepared statement by name
+    pub fn get(&self, name: &str) -> Option<&Statement<'static, Sqlite>> {
+        self.statements.get(name)
+    }
+    
+    /// Get all statement names
+    pub fn statement_names(&self) -> Vec<&String> {
+        self.statements.keys().collect()
+    }
+}
 
 /// Document query operations
 pub struct DocumentQueries;
@@ -157,17 +330,20 @@ impl DocumentQueries {
         limit: i64,
         offset: i64,
     ) -> CodexResult<Vec<Document>> {
-        let documents = query_as::<_, Document>(
+        let documents = sqlx::query_as!(
+            Document,
             r#"
             SELECT d.* FROM documents d
-            JOIN documents_fts fts ON d.rowid = fts.rowid
-            WHERE fts MATCH ? AND d.is_deleted = false
-            ORDER BY rank
-            LIMIT ?
-            "#
+            WHERE d.rowid IN (
+                SELECT rowid FROM documents_fts WHERE documents_fts MATCH ?
+            ) AND d.is_deleted = false
+            ORDER BY d.created_at DESC
+            LIMIT ? OFFSET ?
+            "#,
+            query,
+            limit,
+            offset
         )
-        .bind(query)
-        .bind(limit)
         .fetch_all(pool)
         .await?;
 
@@ -315,29 +491,30 @@ impl EmbeddingQueries {
 
     /// Get all embeddings for similarity search
     pub async fn get_all_vectors(pool: &SqlitePool) -> CodexResult<Vec<(String, Vec<f32>)>> {
-        let rows = query(
-            "SELECT document_id, vector, vector_blob FROM embeddings ORDER BY document_id, chunk_index"
+        let rows = sqlx::query!(
+            r#"
+            SELECT document_id, vector, vector_blob 
+            FROM embeddings 
+            ORDER BY document_id, chunk_index
+            "#
         )
         .fetch_all(pool)
         .await?;
 
         let mut result = Vec::new();
         for row in rows {
-            let doc_id: String = row.get("document_id");
-            let vector = if let Ok(Some(blob)) = row.try_get::<Option<Vec<u8>>, _>("vector_blob") {
-                match bincode::deserialize::<Vec<f32>>(&blob) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                }
-            } else if let Ok(json_str) = row.try_get::<String, _>("vector") {
-                match serde_json::from_str::<Vec<f32>>(&json_str) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                }
+            // Prefer binary vector format for better performance
+            let vector = if let Some(blob) = row.vector_blob {
+                // Deserialize from binary format
+                bincode::deserialize::<Vec<f32>>(&blob)
+                    .map_err(|e| CodexError::Database(sqlx::Error::Decode(Box::new(e))))?
             } else {
-                continue;
+                // Fallback to JSON format
+                serde_json::from_str::<Vec<f32>>(&row.vector)
+                    .map_err(|e| CodexError::Database(sqlx::Error::Decode(Box::new(e))))?
             };
-            result.push((doc_id, vector));
+            
+            result.push((row.document_id, vector));
         }
 
         Ok(result)
@@ -347,7 +524,7 @@ impl EmbeddingQueries {
     pub async fn create_with_binary(pool: &SqlitePool, embedding: &Embedding) -> CodexResult<()> {
         let vector = embedding.get_vector();
         let vector_blob = bincode::serialize(&vector)
-            .map_err(|e| CodexError::Database(sqlx::Error::Decode(Box::new(e))))?;
+            .map_err(|e| CodexError::Database(sqlx::Error::Encode(Box::new(e))))?;
         
         sqlx::query!(
             r#"
@@ -429,7 +606,7 @@ impl EmbeddingQueries {
         model: &str,
     ) -> CodexResult<()> {
         let vector_blob = bincode::serialize(vector)
-            .map_err(|e| CodexError::Database(sqlx::Error::Decode(Box::new(e))))?;
+            .map_err(|e| CodexError::Database(sqlx::Error::Encode(Box::new(e))))?;
         
         sqlx::query!(
             r#"
@@ -704,10 +881,10 @@ impl SearchQueries {
         limit: Option<i64>,
         text_weight: Option<f32>,
         semantic_weight: Option<f32>,
-    ) -> CodexResult<Vec<(Document, f64)>> {
+    ) -> CodexResult<Vec<(Document, f32)>> {
         let limit = limit.unwrap_or(20);
-        let text_weight = text_weight.unwrap_or(0.7) as f64;
-        let semantic_weight = semantic_weight.unwrap_or(0.3) as f64;
+        let text_weight = text_weight.unwrap_or(0.7);
+        let semantic_weight = semantic_weight.unwrap_or(0.3);
         
         let start = std::time::Instant::now();
         
@@ -736,14 +913,14 @@ impl SearchQueries {
         for (doc, score) in semantic_results {
             let normalized_score = Self::normalize_score(score as f64, 0.0, 1.0);
             let existing_score = combined_scores.get(&doc.id).unwrap_or(&0.0);
-            combined_scores.insert(doc.id.clone(), existing_score + (normalized_score * semantic_weight));
+            combined_scores.insert(doc.id.clone(), existing_score + (normalized_score * semantic_weight as f64));
             all_documents.insert(doc.id.clone(), doc);
         }
         
         // Sort by combined score
         let mut final_results: Vec<_> = combined_scores.into_iter()
             .filter_map(|(doc_id, score)| {
-                all_documents.get(&doc_id).map(|doc| (doc.clone(), score))
+                all_documents.get(&doc_id).map(|doc| (doc.clone(), score as f32))
             })
             .collect();
         
