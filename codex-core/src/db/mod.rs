@@ -13,10 +13,12 @@ use crate::config::DatabaseConfig;
 pub mod models;
 pub mod queries;
 pub mod connection;
+pub mod seeder;
 
 pub use models::*;
 pub use queries::*;
 pub use connection::*;
+pub use seeder::*;
 
 /// Database manager handling all SQLite operations
 #[derive(Debug)]
