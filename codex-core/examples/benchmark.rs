@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tracing::{info, warn, error};
 use tracing_subscriber::{EnvFilter, fmt::format::FmtSpan};
-use sysinfo::{System, SystemExt, ProcessExt, CpuExt};
+use sysinfo::System;
 
 use codex_core::{
     ai::AiEngine,
@@ -256,10 +256,8 @@ async fn create_optimized_config() -> CodexResult<AiConfig> {
         temperature: 0.7,
         top_p: 0.9,
         enable_caching: true,
-        cache_size: 1000,           // Cache up to 1000 entries
-        context_window: 4096,
-        batch_size: 1,              // Single batch for latency optimization
-        embedding_model: None,
+        cache_size_mb: 1000,        // Cache up to 1000 MB
+        max_context_length: 4096,
     };
 
     info!("Created optimized config: device={}, max_tokens={}, caching={}",

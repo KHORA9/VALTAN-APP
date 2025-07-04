@@ -58,6 +58,22 @@ pub struct AiConfig {
     pub cache_size_mb: usize,
 }
 
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            models_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("models"),
+            primary_model: "test-llama-7b.gguf".to_string(),
+            max_context_length: 4096,
+            temperature: 0.7,
+            top_p: 0.9,
+            max_tokens: 512,
+            device: "cpu".to_string(),
+            enable_caching: true,
+            cache_size_mb: 512,
+        }
+    }
+}
+
 /// Content management configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentConfig {
@@ -77,6 +93,27 @@ pub struct ContentConfig {
     pub index_batch_size: usize,
 }
 
+impl Default for ContentConfig {
+    fn default() -> Self {
+        Self {
+            content_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("content"),
+            supported_extensions: vec![
+                "txt".to_string(),
+                "md".to_string(),
+                "pdf".to_string(),
+                "epub".to_string(),
+                "html".to_string(),
+                "json".to_string(),
+            ],
+            max_file_size_mb: 100,
+            enable_compression: true,
+            compression_level: 6,
+            auto_index: true,
+            index_batch_size: 100,
+        }
+    }
+}
+
 /// Update system configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateConfig {
@@ -90,6 +127,18 @@ pub struct UpdateConfig {
     pub enable_delta_updates: bool,
     /// Update channel (stable, beta, nightly)
     pub channel: String,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            server_url: "https://updates.codex-vault.com".to_string(),
+            auto_check: true,
+            check_interval_hours: 24,
+            enable_delta_updates: true,
+            channel: "stable".to_string(),
+        }
+    }
 }
 
 /// Application configuration

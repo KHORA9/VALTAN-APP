@@ -7,7 +7,7 @@ use anyhow::Result;
 use tracing::{info, debug, warn, instrument};
 use lru::LruCache;
 use std::num::NonZeroUsize;
-use sysinfo::{System, SystemExt, CpuExt, ProcessExt, PidExt};
+use sysinfo::{System, Pid};
 
 use candle_core::Device;
 use candle_transformers::models::llama::{Llama, LlamaConfig};
@@ -237,7 +237,7 @@ impl SystemMetrics {
         system.refresh_all();
         
         let process_id = std::process::id();
-        let initial_memory_kb = if let Some(process) = system.process(sysinfo::Pid::from_u32(process_id)) {
+        let initial_memory_kb = if let Some(process) = system.process(Pid::from_u32(process_id)) {
             process.memory()
         } else {
             0
@@ -263,7 +263,7 @@ impl SystemMetrics {
         self.system.refresh_all();
         let now = Instant::now();
         
-        if let Some(process) = self.system.process(sysinfo::Pid::from_u32(self.process_id)) {
+        if let Some(process) = self.system.process(Pid::from_u32(self.process_id)) {
             let memory_kb = process.memory();
             let cpu_percent = process.cpu_usage();
             
@@ -326,7 +326,7 @@ impl SystemMetrics {
     fn get_current_metrics(&mut self) -> SystemMetricsSnapshot {
         self.system.refresh_all();
         
-        let process_memory_kb = if let Some(process) = self.system.process(sysinfo::Pid::from_u32(self.process_id)) {
+        let process_memory_kb = if let Some(process) = self.system.process(Pid::from_u32(self.process_id)) {
             process.memory()
         } else {
             0
