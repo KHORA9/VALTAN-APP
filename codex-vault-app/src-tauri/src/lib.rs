@@ -8,6 +8,7 @@ use tauri::{Manager, State};
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use anyhow;
 
 use codex_core::{CodexCore, CodexResult, CodexError};
 
@@ -22,6 +23,34 @@ pub struct CommandResponse<T> {
     pub success: bool,
     pub data: Option<T>,
     pub error: Option<String>,
+}
+
+/// AI response structure matching frontend expectations
+#[derive(Debug, Serialize)]
+pub struct AiResponse {
+    pub content: String,
+    pub model: String,
+    pub processing_time_ms: u64,
+    pub tokens_used: u32,
+}
+
+/// System metrics response structure
+#[derive(Debug, Serialize)]
+pub struct SystemMetricsResponse {
+    pub cpu_usage: f64,
+    pub memory_usage_mb: f64,
+    pub total_memory_mb: f64,
+    pub ai_model_loaded: bool,
+    pub uptime_seconds: u64,
+}
+
+/// Health check response structure
+#[derive(Debug, Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub core_initialized: bool,
+    pub ai_available: bool,
+    pub database_connected: bool,
 }
 
 impl<T> CommandResponse<T> {
@@ -264,6 +293,95 @@ async fn toggle_favorite(
 }
 
 // =====================================================
+// SYSTEM COMMANDS
+// =====================================================
+
+/// Get system metrics (CPU, memory, AI status)
+#[tauri::command]
+async fn get_system_metrics(
+    state: State<'_, AppState>,
+) -> Result<SystemMetricsResponse, tauri::Error> {
+    let core_lock = state.core.read().await;
+    
+    if let Some(ref core) = *core_lock {
+        match core.ai.get_system_metrics().await {
+            Ok(metrics) => {
+                Ok(SystemMetricsResponse {
+                    cpu_usage: metrics.system_cpu_usage,
+                    memory_usage_mb: metrics.system_memory_usage_mb,
+                    total_memory_mb: metrics.total_memory_mb,
+                    ai_model_loaded: true, // If we got metrics, model is loaded
+                    uptime_seconds: metrics.uptime_seconds,
+                })
+            },
+            Err(_) => {
+                Ok(SystemMetricsResponse {
+                    cpu_usage: 0.0,
+                    memory_usage_mb: 0.0,
+                    total_memory_mb: 0.0,
+                    ai_model_loaded: false,
+                    uptime_seconds: 0,
+                })
+            }
+        }
+    } else {
+        Ok(SystemMetricsResponse {
+            cpu_usage: 0.0,
+            memory_usage_mb: 0.0,
+            total_memory_mb: 0.0,
+            ai_model_loaded: false,
+            uptime_seconds: 0,
+        })
+    }
+}
+
+/// Health check for system status
+#[tauri::command]
+async fn health_check(
+    state: State<'_, AppState>,
+) -> Result<HealthResponse, tauri::Error> {
+    let core_lock = state.core.read().await;
+    
+    if let Some(ref core) = *core_lock {
+        let ai_health = core.ai.health_check().await.unwrap_or(false);
+        let db_health = core.content.health_check().await.unwrap_or(false);
+        
+        Ok(HealthResponse {
+            status: if ai_health && db_health { "healthy".to_string() } else { "degraded".to_string() },
+            core_initialized: true,
+            ai_available: ai_health,
+            database_connected: db_health,
+        })
+    } else {
+        Ok(HealthResponse {
+            status: "offline".to_string(),
+            core_initialized: false,
+            ai_available: false,
+            database_connected: false,
+        })
+    }
+}
+
+/// Get available document categories
+#[tauri::command]
+async fn get_categories(
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, tauri::Error> {
+    let core_lock = state.core.read().await;
+    
+    if let Some(ref core) = *core_lock {
+        match core.content.get_categories().await {
+            Ok(categories) => Ok(categories),
+            Err(e) => {
+                println!("Failed to get categories: {}", e);
+                Ok(vec!["Philosophy".to_string(), "Science".to_string(), "Technology".to_string()])
+            }
+        }
+    } else {
+        Ok(vec!["Philosophy".to_string(), "Science".to_string(), "Technology".to_string()])
+    }
+}
+
 // AI COMMANDS
 // =====================================================
 
@@ -272,14 +390,104 @@ async fn toggle_favorite(
 async fn generate_ai_response(
     prompt: String,
     state: State<'_, AppState>,
-) -> Result<CommandResponse<String>, tauri::Error> {
+) -> Result<AiResponse, tauri::Error> {
     let core_lock = state.core.read().await;
     
     if let Some(ref core) = *core_lock {
+        let start_time = std::time::Instant::now();
         let result = core.ai.generate_text(&prompt).await;
-        Ok(CommandResponse::from(result))
+        let processing_time_ms = start_time.elapsed().as_millis() as u64;
+        
+        match result {
+            Ok(content) => {
+                // Estimate tokens used (rough approximation: ~4 chars per token)
+                let tokens_used = (prompt.len() + content.len()) / 4;
+                
+                Ok(AiResponse {
+                    content,
+                    model: "test-llama-7b".to_string(),
+                    processing_time_ms,
+                    tokens_used: tokens_used as u32,
+                })
+            },
+            Err(e) => Err(tauri::Error::Anyhow(anyhow::anyhow!("AI generation failed: {}", e))),
+        }
     } else {
-        Ok(CommandResponse::error("Core not initialized".to_string()))
+        Err(tauri::Error::Anyhow(anyhow::anyhow!("Core not initialized")))
+    }
+}
+
+/// Simple chat message structure for conversation context
+#[derive(Debug, Deserialize)]
+pub struct ChatMessageRequest {
+    pub role: String,
+    pub content: String,
+}
+
+/// Generate AI response with streaming support and conversation context
+#[tauri::command]
+async fn chat_stream(
+    prompt: String,
+    conversation_history: Option<Vec<ChatMessageRequest>>,
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<AiResponse, tauri::Error> {
+    let core_lock = state.core.read().await;
+    
+    if let Some(ref core) = *core_lock {
+        let start_time = std::time::Instant::now();
+        
+        // Build context from conversation history
+        let mut context_prompt = String::new();
+        if let Some(history) = conversation_history {
+            for msg in history.iter().rev().take(6) { // Take last 6 messages for context
+                if msg.role == "user" {
+                    context_prompt.push_str(&format!("User: {}\n", msg.content));
+                } else if msg.role == "assistant" {
+                    context_prompt.push_str(&format!("Assistant: {}\n", msg.content));
+                }
+            }
+        }
+        
+        // Add current prompt
+        context_prompt.push_str(&format!("User: {}\nAssistant:", prompt));
+        
+        // Create callback for streaming tokens
+        let app_handle_clone = app_handle.clone();
+        let callback = move |chunk: String| {
+            let _ = app_handle_clone.emit_all("ai-chunk", chunk);
+        };
+        
+        let result = core.ai.generate_text_stream(&context_prompt, callback).await;
+        let processing_time_ms = start_time.elapsed().as_millis() as u64;
+        
+        match result {
+            Ok(content) => {
+                // Estimate tokens used (rough approximation: ~4 chars per token)
+                let tokens_used = (prompt.len() + content.len()) / 4;
+                
+                let response = AiResponse {
+                    content: content.clone(),
+                    model: "test-llama-7b".to_string(),
+                    processing_time_ms,
+                    tokens_used: tokens_used as u32,
+                };
+                
+                // Emit completion event
+                let _ = app_handle.emit_all("ai-complete", &response);
+                
+                Ok(response)
+            },
+            Err(e) => {
+                let error_msg = format!("AI generation failed: {}", e);
+                let _ = app_handle.emit_all("ai-error", &error_msg);
+                Err(tauri::Error::Anyhow(anyhow::anyhow!(error_msg)))
+            }
+        }
+    } else {
+        let error_msg = "Core not initialized";
+        let _ = app_handle.emit_all("ai-error", error_msg);
+        Err(tauri::Error::Anyhow(anyhow::anyhow!(error_msg)))
     }
 }
 
@@ -410,6 +618,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             initialize_core,
             get_health_status,
+            health_check,
+            get_system_metrics,
+            get_categories,
             import_document,
             import_text_content,
             get_document,
@@ -417,6 +628,7 @@ pub fn run() {
             search_documents,
             toggle_favorite,
             generate_ai_response,
+            chat_stream,
             rag_query,
             summarize_document,
         ])

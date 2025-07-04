@@ -22,7 +22,7 @@ tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 
 # Core library integration
-codex-core = { path = "../codex-core" }
+codex-core = { path = "../../codex-core" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

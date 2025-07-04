@@ -5,6 +5,7 @@ import ApiService, {
   SearchOptions, 
   AiResponse, 
   SystemMetrics,
+  ChatMessage,
   handleApiError,
   ApiError
 } from '../services/api';
@@ -186,12 +187,7 @@ export function useCategories() {
 
 // AI Chat hook
 export function useAiChat() {
-  const [messages, setMessages] = useState<Array<{
-    id: string;
-    role: 'user' | 'assistant';
-    content: string;
-    timestamp: Date;
-  }>>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -273,7 +269,8 @@ export function useAiChat() {
         },
         (error) => {
           setError(error);
-        }
+        },
+        messages // Pass current conversation history for context
       );
     } catch (err) {
       const apiError = handleApiError(err);

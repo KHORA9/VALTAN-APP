@@ -46,6 +46,13 @@ export interface SystemMetrics {
   cache_size_mb: number;
 }
 
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+}
+
 // API Service Class
 export class ApiService {
   // Document Management
@@ -140,23 +147,47 @@ export class ApiService {
     prompt: string,
     onChunk: (chunk: string) => void,
     onComplete: (response: AiResponse) => void,
-    onError: (error: string) => void
+    onError: (error: string) => void,
+    conversationHistory?: ChatMessage[]
   ): Promise<void> {
     try {
-      // Note: This would require implementing streaming support in Tauri
-      // For now, we'll simulate streaming by calling the regular API
-      const response = await this.generateAiResponse(prompt);
+      const { listen } = await import('@tauri-apps/api/event');
       
-      // Simulate streaming by breaking response into chunks
-      const words = response.content.split(' ');
-      for (let i = 0; i < words.length; i++) {
-        const chunk = words.slice(0, i + 1).join(' ');
-        onChunk(chunk);
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
+      // Set up event listeners for streaming
+      const unlistenChunk = await listen<string>('ai-chunk', (event) => {
+        onChunk(event.payload);
+      });
       
-      onComplete(response);
+      const unlistenComplete = await listen<AiResponse>('ai-complete', (event) => {
+        onComplete(event.payload);
+        unlistenChunk();
+        unlistenComplete();
+        unlistenError();
+      });
+      
+      const unlistenError = await listen<string>('ai-error', (event) => {
+        onError(event.payload);
+        unlistenChunk();
+        unlistenComplete();
+        unlistenError();
+      });
+      
+      // Prepare conversation history (last 6 messages for context)
+      const historyForBackend = conversationHistory 
+        ? conversationHistory.slice(-6).map(msg => ({
+            role: msg.role,
+            content: msg.content
+          }))
+        : undefined;
+      
+      // Start streaming by calling the chat_stream command
+      await invoke('chat_stream', { 
+        prompt, 
+        conversationHistory: historyForBackend 
+      });
+      
     } catch (error) {
+      console.error('AI streaming error:', error);
       onError(error instanceof Error ? error.message : String(error));
     }
   }
