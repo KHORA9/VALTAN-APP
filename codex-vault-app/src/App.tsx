@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Bars3Icon,
   XMarkIcon,
-  MagnifyingGlassIcon,
   ChatBubbleLeftRightIcon,
   DocumentTextIcon,
   Cog6ToothIcon,
@@ -26,7 +25,7 @@ type ViewMode = 'desktop' | 'mobile';
 
 function App() {
   // State management
-  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | undefined>(undefined);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('reader');
   const [viewMode, setViewMode] = useState<ViewMode>('desktop');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -48,7 +47,7 @@ function App() {
     const handleResize = () => {
       const isMobile = window.innerWidth < 1024; // lg breakpoint
       setViewMode(isMobile ? 'mobile' : 'desktop');
-      
+
       if (isMobile) {
         setSidebarCollapsed(true);
       }
@@ -117,7 +116,7 @@ function App() {
       {/* Mobile Sidebar Overlay */}
       {viewMode === 'mobile' && mobileMenuOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <div 
+          <div
             className="fixed inset-0 bg-black bg-opacity-50"
             onClick={() => setMobileMenuOpen(false)}
           />
@@ -149,7 +148,8 @@ function App() {
               onClick={toggleSidebar}
               className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
             >
-              {(viewMode === 'mobile' && mobileMenuOpen) || (viewMode === 'desktop' && !sidebarCollapsed) ? (
+              {(viewMode === 'mobile' && mobileMenuOpen) ||
+              (viewMode === 'desktop' && !sidebarCollapsed) ? (
                 <XMarkIcon className="w-5 h-5" />
               ) : (
                 <Bars3Icon className="w-5 h-5" />
@@ -174,9 +174,12 @@ function App() {
                   onClick={() => toggleLayoutMode('reader')}
                   className={clsx(
                     'p-2 rounded-md transition-colors',
-                    layoutMode === 'reader'
-                      ? 'bg-white dark:bg-gray-600 text-primary-600 dark:text-primary-400 shadow-sm'
-                      : 'text-gray-500 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-600'
+                    {
+                      'bg-white dark:bg-gray-600 text-primary-600 dark:text-primary-400 shadow-sm':
+                        layoutMode === 'reader',
+                      'text-gray-500 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-600':
+                        layoutMode !== 'reader',
+                    }
                   )}
                   title="Reader Mode"
                 >
@@ -186,9 +189,12 @@ function App() {
                   onClick={() => toggleLayoutMode('chat')}
                   className={clsx(
                     'p-2 rounded-md transition-colors',
-                    layoutMode === 'chat'
-                      ? 'bg-white dark:bg-gray-600 text-primary-600 dark:text-primary-400 shadow-sm'
-                      : 'text-gray-500 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-600'
+                    {
+                      'bg-white dark:bg-gray-600 text-primary-600 dark:text-primary-400 shadow-sm':
+                        layoutMode === 'chat',
+                      'text-gray-500 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-600':
+                        layoutMode !== 'chat',
+                    }
                   )}
                   title="Chat Mode"
                 >
@@ -258,7 +264,7 @@ function App() {
               {/* Reader Mode */}
               {layoutMode === 'reader' && (
                 <ReaderPane
-                  documentId={selectedDocumentId || undefined}
+                  documentId={selectedDocumentId}
                   className="flex-1"
                 />
               )}
@@ -275,7 +281,7 @@ function App() {
               {layoutMode === 'split' && (
                 <>
                   <ReaderPane
-                    documentId={selectedDocumentId || undefined}
+                    documentId={selectedDocumentId}
                     className="flex-1 border-r border-gray-200 dark:border-gray-700"
                   />
                   <ChatPane
@@ -292,7 +298,7 @@ function App() {
             <>
               {layoutMode === 'reader' && (
                 <ReaderPane
-                  documentId={selectedDocumentId || undefined}
+                  documentId={selectedDocumentId}
                   className="flex-1"
                 />
               )}

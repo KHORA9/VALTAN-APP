@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   DocumentTextIcon,
   HeartIcon,
@@ -11,7 +11,6 @@ import { HeartIcon as HeartSolidIcon } from '@heroicons/react/24/solid';
 import clsx from 'clsx';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { useRecentDocuments, useFavoriteDocuments, useCategories } from '../../hooks/useApi';
-import { Document } from '../../services/api';
 
 interface SidebarProps {
   className?: string;

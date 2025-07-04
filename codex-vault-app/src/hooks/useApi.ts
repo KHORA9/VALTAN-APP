@@ -3,11 +3,9 @@ import ApiService, {
   Document, 
   SearchResult, 
   SearchOptions, 
-  AiResponse, 
   SystemMetrics,
   ChatMessage,
-  handleApiError,
-  ApiError
+  handleApiError
 } from '../services/api';
 
 // Generic hook for API calls

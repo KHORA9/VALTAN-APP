@@ -1,4 +1,3 @@
-import React from 'react';
 import { SunIcon, MoonIcon, ComputerDesktopIcon } from '@heroicons/react/24/outline';
 import { useTheme } from '../../contexts/ThemeContext';
 import clsx from 'clsx';

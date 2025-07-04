@@ -1,0 +1,45 @@
+[profile.default]
+# Number of tests to run simultaneously.
+test-threads = "num-cpus"
+
+# The number of retries for a test.
+retries = 1
+
+# Show output immediately on test failure.
+failure-output = "immediate"
+
+# Show output for successful tests as well.
+success-output = "never"
+
+# Timeout for each test.
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+# Global test timeout
+final-status-level = "slow"
+
+[profile.default.junit]
+# Store JUnit XML output for CI/CD integration
+path = "target/nextest.xml"
+
+[profile.ci]
+# CI profile with stricter settings
+test-threads = 4
+retries = 3
+failure-output = "immediate-final"
+success-output = "never"
+final-status-level = "all"
+
+# Specific timeout settings for AI tests
+[[profile.default.overrides]]
+filter = 'test(/ai/)'
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+# Database tests may need more time for setup
+[[profile.default.overrides]]
+filter = 'test(/db/)'
+slow-timeout = { period = "45s", terminate-after = 2 }
+
+# Content parsing tests should be fast
+[[profile.default.overrides]]
+filter = 'test(/content/)'
+slow-timeout = { period = "15s", terminate-after = 1 }

@@ -27,7 +27,7 @@ export function SearchBar({ onSearch, onResultSelect, placeholder = "Search docu
   const resultsRef = useRef<HTMLDivElement>(null);
 
   // Use the search hook
-  const { results, loading: isLoading, error, search, clearResults } = useSearch();
+  const { results, loading: isLoading, search, clearResults } = useSearch();
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

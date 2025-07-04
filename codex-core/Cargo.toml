@@ -101,6 +101,10 @@ tempfile = "3.8"
 proptest = "1.0"
 criterion = { version = "0.5", features = ["html_reports"] }
 cargo-deny = "0.14"
+tokio-test = "0.4"
+rstest = "0.18"
+fake = "2.9"
+serial_test = "3.0"
 
 [features]
 default = ["sqlite"]

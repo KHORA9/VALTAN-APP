@@ -4,13 +4,13 @@
 //! for the Codex Vault offline AI-powered knowledge repository.
 
 use std::sync::Arc;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use anyhow;
 
-use codex_core::{CodexCore, CodexResult, CodexError};
+use codex_core::{CodexCore, CodexResult};
 
 /// Application state containing the core library instance
 pub struct AppState {
@@ -150,8 +150,10 @@ async fn get_health_status(state: State<'_, AppState>) -> Result<CommandResponse
     let core_lock = state.core.read().await;
     
     if let Some(ref core) = *core_lock {
-        let health = core.health_check().await;
-        Ok(CommandResponse::from(health.map(|h| h.overall)))
+        match core.health_check().await {
+            Ok(health) => Ok(CommandResponse::success(health.overall)),
+            Err(e) => Ok(CommandResponse::error(e.to_string())),
+        }
     } else {
         Ok(CommandResponse::error("Core not initialized".to_string()))
     }
@@ -304,12 +306,12 @@ async fn get_system_metrics(
     let core_lock = state.core.read().await;
     
     if let Some(ref core) = *core_lock {
-        match core.ai.get_system_metrics().await {
+        match core.ai.get_stats().await {
             Ok(metrics) => {
                 Ok(SystemMetricsResponse {
-                    cpu_usage: metrics.system_cpu_usage,
-                    memory_usage_mb: metrics.system_memory_usage_mb,
-                    total_memory_mb: metrics.total_memory_mb,
+                    cpu_usage: 0.0, // TODO: Add system CPU usage to AiStats
+                    memory_usage_mb: metrics.memory_usage_mb,
+                    total_memory_mb: 0.0, // TODO: Add total memory to AiStats
                     ai_model_loaded: true, // If we got metrics, model is loaded
                     uptime_seconds: metrics.uptime_seconds,
                 })
@@ -369,14 +371,9 @@ async fn get_categories(
 ) -> Result<Vec<String>, tauri::Error> {
     let core_lock = state.core.read().await;
     
-    if let Some(ref core) = *core_lock {
-        match core.content.get_categories().await {
-            Ok(categories) => Ok(categories),
-            Err(e) => {
-                println!("Failed to get categories: {}", e);
-                Ok(vec!["Philosophy".to_string(), "Science".to_string(), "Technology".to_string()])
-            }
-        }
+    if let Some(ref _core) = *core_lock {
+        // TODO: Implement get_categories method in ContentManager
+        Ok(vec!["Philosophy".to_string(), "Science".to_string(), "Technology".to_string()])
     } else {
         Ok(vec!["Philosophy".to_string(), "Science".to_string(), "Technology".to_string()])
     }
@@ -455,7 +452,7 @@ async fn chat_stream(
         // Create callback for streaming tokens
         let app_handle_clone = app_handle.clone();
         let callback = move |chunk: String| {
-            let _ = app_handle_clone.emit_all("ai-chunk", chunk);
+            let _ = app_handle_clone.emit("ai-chunk", chunk);
         };
         
         let result = core.ai.generate_text_stream(&context_prompt, callback).await;
@@ -474,19 +471,19 @@ async fn chat_stream(
                 };
                 
                 // Emit completion event
-                let _ = app_handle.emit_all("ai-complete", &response);
+                let _ = app_handle.emit("ai-complete", &response);
                 
                 Ok(response)
             },
             Err(e) => {
                 let error_msg = format!("AI generation failed: {}", e);
-                let _ = app_handle.emit_all("ai-error", &error_msg);
+                let _ = app_handle.emit("ai-error", &error_msg);
                 Err(tauri::Error::Anyhow(anyhow::anyhow!(error_msg)))
             }
         }
     } else {
         let error_msg = "Core not initialized";
-        let _ = app_handle.emit_all("ai-error", error_msg);
+        let _ = app_handle.emit("ai-error", error_msg);
         Err(tauri::Error::Anyhow(anyhow::anyhow!(error_msg)))
     }
 }
@@ -506,8 +503,10 @@ async fn rag_query(
         
         match result {
             Ok(rag_response) => {
-                let json_response = serde_json::to_value(&rag_response)
-                    .map_err(|e| CommandResponse::error(format!("Serialization error: {}", e)))?;
+                let json_response = match serde_json::to_value(&rag_response) {
+                    Ok(json) => json,
+                    Err(e) => return Ok(CommandResponse::error(format!("Serialization error: {}", e))),
+                };
                 Ok(CommandResponse::success(json_response))
             }
             Err(e) => Ok(CommandResponse::error(e.to_string())),
@@ -559,10 +558,10 @@ fn document_to_dto(doc: &codex_core::db::models::Document) -> DocumentDto {
         category: doc.category.clone(),
         tags: doc.get_tags(),
         language: doc.language.clone(),
-        reading_time: doc.reading_time,
-        difficulty_level: doc.difficulty_level,
-        created_at: doc.created_at.to_rfc3339(),
-        updated_at: doc.updated_at.to_rfc3339(),
+        reading_time: doc.reading_time.map(|rt| rt as i32),
+        difficulty_level: doc.difficulty_level.map(|dl| dl as i32),
+        created_at: doc.created_at.clone(),
+        updated_at: doc.updated_at.clone(),
         view_count: doc.view_count,
         is_favorite: doc.is_favorite,
     }
@@ -615,6 +614,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::init())
         .invoke_handler(tauri::generate_handler![
             initialize_core,
             get_health_status,

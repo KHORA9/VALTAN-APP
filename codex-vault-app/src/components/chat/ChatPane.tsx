@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   PaperAirplaneIcon,
   StopIcon,
@@ -11,7 +11,8 @@ import {
 import { UserIcon, CpuChipIcon } from '@heroicons/react/24/solid';
 import clsx from 'clsx';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
-import { useAiChat, useSystemMetrics, useHealthCheck } from '../../hooks/useApi';
+import { useAiChat, useHealthCheck } from '../../hooks/useApi';
+import { ChatMessage } from '../../services/api';
 
 interface ChatPaneProps {
   className?: string;
@@ -21,26 +22,21 @@ interface ChatPaneProps {
   systemStatus?: 'ready' | 'loading' | 'error';
 }
 
-export function ChatPane({ 
-  className, 
-  onSendMessage, 
-  onClearChat, 
-  isGenerating: propIsGenerating = false,
-  systemStatus: propSystemStatus = 'ready'
+export function ChatPane({
+  className,
+  onSendMessage,
+  onClearChat,
 }: ChatPaneProps) {
   const [inputMessage, setInputMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Use hooks
-  const { messages, isGenerating, error, sendMessage, clearChat } = useAiChat();
-  const { metrics } = useSystemMetrics();
+  const { messages, isGenerating, sendMessage, clearChat } = useAiChat();
   const { isHealthy } = useHealthCheck();
 
   // Determine system status
-  const systemStatus = propSystemStatus === 'ready' 
-    ? (isHealthy === true ? 'ready' : isHealthy === false ? 'error' : 'loading')
-    : propSystemStatus;
+  const systemStatus = isHealthy === true ? 'ready' : isHealthy === false ? 'error' : 'loading';
 
   useEffect(() => {
     scrollToBottom();

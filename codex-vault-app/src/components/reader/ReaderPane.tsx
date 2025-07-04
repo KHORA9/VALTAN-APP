@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   BookmarkIcon,
   HeartIcon,
@@ -14,7 +14,6 @@ import { HeartIcon as HeartSolidIcon, BookmarkIcon as BookmarkSolidIcon } from '
 import clsx from 'clsx';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { useDocument } from '../../hooks/useApi';
-import { Document } from '../../services/api';
 
 interface ReaderPaneProps {
   documentId?: string;
@@ -60,7 +59,7 @@ export function ReaderPane({
 
   const handleShare = async () => {
     if (document) {
-      const shareData = await shareDocument('url');
+      await shareDocument('url');
       onShare?.(document.id);
     }
   };
@@ -87,7 +86,7 @@ export function ReaderPane({
         <div className="text-center">
           <p className="text-red-600 dark:text-red-400 mb-2">{error}</p>
           <button
-            onClick={() => documentId && loadDocument(documentId)}
+            onClick={() => window.location.reload()}
             className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
           >
             Try Again
