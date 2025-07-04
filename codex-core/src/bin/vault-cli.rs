@@ -8,15 +8,15 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use tokio::fs;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, debug};
 use tracing_subscriber;
 
 use codex_core::{
     CodexError, CodexResult,
-    config::{CodexConfig, ContentConfig, AiConfig, DatabaseConfig},
+    config::{CodexConfig, ContentConfig, AiConfig, DatabaseConfig, UpdateConfig, AppConfig},
     db::DatabaseManager,
     ai::AiEngine,
-    content::{ContentManager, BulkImportResult, ContentStats},
+    content::ContentManager,
 };
 
 #[derive(Parser)]
@@ -157,22 +157,23 @@ async fn main() -> CodexResult<()> {
 
 async fn create_config(cli: &Cli) -> CodexResult<CodexConfig> {
     let database_config = DatabaseConfig {
-        url: format!("sqlite:{}", cli.database.display()),
+        path: cli.database.clone(),
         max_connections: 10,
+        connection_timeout: 30,
         enable_wal: true,
         enable_foreign_keys: true,
-        busy_timeout_ms: 30000,
     };
     
     let ai_config = AiConfig {
         models_dir: cli.models_dir.clone(),
-        model_name: "test-llama-7b.gguf".to_string(),
-        max_tokens: 512,
+        primary_model: "test-llama-7b.gguf".to_string(),
+        max_context_length: 4096,
         temperature: 0.7,
+        top_p: 0.9,
+        max_tokens: 512,
+        device: "cpu".to_string(),
         enable_caching: true,
-        context_window: 4096,
-        embedding_model: "sentence-transformers/all-MiniLM-L6-v2".to_string(),
-        embedding_dimensions: 384,
+        cache_size_mb: 512,
     };
     
     let content_config = ContentConfig {
@@ -182,15 +183,28 @@ async fn create_config(cli: &Cli) -> CodexResult<CodexConfig> {
             "html".to_string(), "htm".to_string(), "json".to_string(),
         ],
         max_file_size_mb: 50,
-        enable_ai_enhancement: true,
-        chunk_size: 1000,
-        chunk_overlap: 200,
+        enable_compression: true,
+        compression_level: 6,
+        auto_index: true,
+        index_batch_size: 100,
+    };
+    
+    let update_config = UpdateConfig::default();
+    let app_config = AppConfig {
+        name: "Codex Vault CLI".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        log_level: if cli.verbose { "debug" } else { "info" }.to_string(),
+        enable_telemetry: false,
+        theme: "auto".to_string(),
+        locale: "en-US".to_string(),
     };
     
     Ok(CodexConfig {
         database: database_config,
         ai: ai_config,
         content: content_config,
+        update: update_config,
+        app: app_config,
     })
 }
 
@@ -344,16 +358,21 @@ async fn discover_files_recursive(pattern: &str) -> CodexResult<Vec<PathBuf>> {
     };
     
     let mut files = Vec::new();
-    collect_files_recursive(base_dir, &mut files).await?;
+    collect_files_recursive(base_dir, &mut files)?;
     
     files.sort();
     Ok(files)
 }
 
-async fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> CodexResult<()> {
-    let mut entries = fs::read_dir(dir).await?;
+fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> CodexResult<()> {
+    use std::fs;
     
-    while let Some(entry) = entries.next_entry().await? {
+    let entries = fs::read_dir(dir)
+        .map_err(|e| CodexError::io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to read directory {:?}: {}", dir, e))))?;
+    
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| CodexError::io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to read directory entry: {}", e))))?;
         let path = entry.path();
         
         if path.is_file() && is_supported_file(&path) {
@@ -362,7 +381,7 @@ async fn collect_files_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> CodexR
             // Skip hidden directories
             if let Some(dir_name) = path.file_name() {
                 if !dir_name.to_string_lossy().starts_with('.') {
-                    collect_files_recursive(&path, files).await?;
+                    collect_files_recursive(&path, files)?;
                 }
             }
         }

@@ -57,6 +57,7 @@ struct InferenceStats {
 
 /// Detailed system metrics tracking for performance monitoring
 #[derive(Debug)]
+#[allow(dead_code)] // Monitoring fields for future use
 struct SystemMetrics {
     system: System,
     start_time: Instant,
@@ -71,6 +72,7 @@ struct SystemMetrics {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Monitoring fields for future use
 struct MemorySnapshot {
     timestamp: Instant,
     process_memory_kb: u64,
@@ -80,6 +82,7 @@ struct MemorySnapshot {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Monitoring fields for future use
 struct CpuSnapshot {
     timestamp: Instant,
     cpu_percent: f32,
@@ -143,6 +146,7 @@ impl TokenCache {
         self.prompt_tokens.get(prompt).cloned()
     }
 
+    #[allow(dead_code)] // Future extensibility
     fn cache_token_sequence(&mut self, context: &str, tokens: Vec<u32>) {
         let token_count = tokens.len();
         
@@ -154,10 +158,12 @@ impl TokenCache {
         self.current_token_count += token_count;
     }
 
+    #[allow(dead_code)] // Future extensibility
     fn get_token_sequence(&mut self, context: &str) -> Option<Vec<u32>> {
         self.token_sequences.get(context).cloned()
     }
 
+    #[allow(dead_code)] // Future extensibility
     fn cache_decoded_text(&mut self, tokens: Vec<u32>, text: String) {
         let token_count = tokens.len();
         
@@ -169,6 +175,7 @@ impl TokenCache {
         self.current_token_count += token_count;
     }
 
+    #[allow(dead_code)] // Future extensibility
     fn get_decoded_text(&mut self, tokens: &[u32]) -> Option<String> {
         self.token_text.get(tokens).cloned()
     }
@@ -216,13 +223,13 @@ impl TokenCache {
 }
 
 #[derive(Debug, Clone)]
-struct TokenCacheStats {
-    current_token_count: usize,
-    max_token_count: usize,
-    prompt_cache_size: usize,
-    sequence_cache_size: usize,
-    text_cache_size: usize,
-    memory_usage_mb: f64,
+pub struct TokenCacheStats {
+    pub current_token_count: usize,
+    pub max_token_count: usize,
+    pub prompt_cache_size: usize,
+    pub sequence_cache_size: usize,
+    pub text_cache_size: usize,
+    pub memory_usage_mb: f64,
 }
 
 #[derive(Debug, Clone)]

@@ -3,10 +3,8 @@
 //! This module provides sample public domain content for testing and demonstration
 
 use sqlx::SqlitePool;
-use uuid::Uuid;
-use chrono::Utc;
 
-use crate::{CodexError, CodexResult};
+use crate::CodexResult;
 use super::models::Document;
 use super::queries::DocumentQueries;
 
