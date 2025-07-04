@@ -76,6 +76,28 @@ impl AiEngine {
         inference.generate(prompt, &self.config).await
     }
 
+    /// Simple inference API - generate response for a given prompt
+    /// Optimized for <1s response time with default settings
+    pub async fn infer(&self, prompt: &str) -> CodexResult<String> {
+        let start_time = std::time::Instant::now();
+        
+        // Use optimized settings for fastest response
+        let mut fast_config = self.config.clone();
+        fast_config.max_tokens = 256; // Limit tokens for speed
+        fast_config.temperature = 0.7;
+        fast_config.enable_caching = true;
+        
+        let inference = self.inference.read().await;
+        let response = inference.generate(prompt, &fast_config).await?;
+        
+        let elapsed = start_time.elapsed();
+        info!("Inference completed in {:.3}s for prompt: '{}'", 
+              elapsed.as_secs_f64(), 
+              prompt.chars().take(50).collect::<String>());
+        
+        Ok(response)
+    }
+
     /// Generate text with streaming (for real-time UI updates)
     pub async fn generate_text_stream(
         &self,

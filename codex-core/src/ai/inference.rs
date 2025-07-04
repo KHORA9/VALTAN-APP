@@ -7,6 +7,7 @@ use anyhow::Result;
 use tracing::{info, debug, warn, instrument};
 use lru::LruCache;
 use std::num::NonZeroUsize;
+use sysinfo::{System, SystemExt, CpuExt, ProcessExt, PidExt};
 
 use candle_core::Device;
 use candle_transformers::models::llama::{Llama, LlamaConfig};
@@ -25,6 +26,8 @@ pub struct InferenceEngine {
     config: LlamaConfig,
     stats: Arc<Mutex<InferenceStats>>,
     cache: Arc<Mutex<InferenceCache>>,
+    token_cache: Arc<Mutex<TokenCache>>,
+    system_metrics: Arc<Mutex<SystemMetrics>>,
     model_path: String,
     start_time: Instant,
     memory_limit_mb: usize,
@@ -52,10 +55,57 @@ struct InferenceStats {
     current_memory_usage_mb: f64,
 }
 
+/// Detailed system metrics tracking for performance monitoring
+#[derive(Debug)]
+struct SystemMetrics {
+    system: System,
+    start_time: Instant,
+    last_update: Instant,
+    process_id: u32,
+    initial_memory_kb: u64,
+    peak_memory_kb: u64,
+    peak_cpu_percent: f32,
+    total_cpu_time: Duration,
+    inference_memory_snapshots: Vec<MemorySnapshot>,
+    cpu_usage_history: Vec<CpuSnapshot>,
+}
+
+#[derive(Debug, Clone)]
+struct MemorySnapshot {
+    timestamp: Instant,
+    process_memory_kb: u64,
+    system_memory_kb: u64,
+    memory_delta_kb: i64,
+    context: String,
+}
+
+#[derive(Debug, Clone)]
+struct CpuSnapshot {
+    timestamp: Instant,
+    cpu_percent: f32,
+    system_load_avg: f32,
+    context: String,
+}
+
 /// Production-grade LRU inference cache for repeated queries
 #[derive(Debug)]
 struct InferenceCache {
     entries: LruCache<String, CacheEntry>,
+}
+
+/// Token-level cache for storing up to 1M tokens in RAM
+#[derive(Debug)]
+struct TokenCache {
+    /// Cache for tokenized prompts (prompt -> tokens)
+    prompt_tokens: LruCache<String, Vec<u32>>,
+    /// Cache for generated token sequences (context -> generated tokens)
+    token_sequences: LruCache<String, Vec<u32>>,
+    /// Cache for decoded text (tokens -> text)
+    token_text: LruCache<Vec<u32>, String>,
+    /// Total tokens currently stored in cache
+    current_token_count: usize,
+    /// Maximum tokens to store (1M target)
+    max_token_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +114,313 @@ struct CacheEntry {
     created_at: Instant,
     last_accessed: Instant,
     access_count: u64,
+}
+
+impl TokenCache {
+    fn new(max_token_count: usize) -> Self {
+        Self {
+            prompt_tokens: LruCache::new(NonZeroUsize::new(1000).unwrap()),
+            token_sequences: LruCache::new(NonZeroUsize::new(500).unwrap()),
+            token_text: LruCache::new(NonZeroUsize::new(500).unwrap()),
+            current_token_count: 0,
+            max_token_count,
+        }
+    }
+
+    fn cache_prompt_tokens(&mut self, prompt: &str, tokens: Vec<u32>) {
+        let token_count = tokens.len();
+        
+        // Ensure we don't exceed token limit
+        if self.current_token_count + token_count > self.max_token_count {
+            self.evict_tokens_to_fit(token_count);
+        }
+        
+        self.prompt_tokens.put(prompt.to_string(), tokens);
+        self.current_token_count += token_count;
+    }
+
+    fn get_prompt_tokens(&mut self, prompt: &str) -> Option<Vec<u32>> {
+        self.prompt_tokens.get(prompt).cloned()
+    }
+
+    fn cache_token_sequence(&mut self, context: &str, tokens: Vec<u32>) {
+        let token_count = tokens.len();
+        
+        if self.current_token_count + token_count > self.max_token_count {
+            self.evict_tokens_to_fit(token_count);
+        }
+        
+        self.token_sequences.put(context.to_string(), tokens);
+        self.current_token_count += token_count;
+    }
+
+    fn get_token_sequence(&mut self, context: &str) -> Option<Vec<u32>> {
+        self.token_sequences.get(context).cloned()
+    }
+
+    fn cache_decoded_text(&mut self, tokens: Vec<u32>, text: String) {
+        let token_count = tokens.len();
+        
+        if self.current_token_count + token_count > self.max_token_count {
+            self.evict_tokens_to_fit(token_count);
+        }
+        
+        self.token_text.put(tokens, text);
+        self.current_token_count += token_count;
+    }
+
+    fn get_decoded_text(&mut self, tokens: &[u32]) -> Option<String> {
+        self.token_text.get(tokens).cloned()
+    }
+
+    fn evict_tokens_to_fit(&mut self, required_tokens: usize) {
+        // Simple eviction strategy: remove oldest entries until we have space
+        while self.current_token_count + required_tokens > self.max_token_count {
+            // Try to evict from each cache type
+            let mut evicted = false;
+            
+            if let Some((_, tokens)) = self.prompt_tokens.pop_lru() {
+                self.current_token_count = self.current_token_count.saturating_sub(tokens.len());
+                evicted = true;
+            } else if let Some((_, tokens)) = self.token_sequences.pop_lru() {
+                self.current_token_count = self.current_token_count.saturating_sub(tokens.len());
+                evicted = true;
+            } else if let Some((tokens, _)) = self.token_text.pop_lru() {
+                self.current_token_count = self.current_token_count.saturating_sub(tokens.len());
+                evicted = true;
+            }
+            
+            if !evicted {
+                break; // Prevent infinite loop
+            }
+        }
+    }
+
+    fn get_stats(&self) -> TokenCacheStats {
+        TokenCacheStats {
+            current_token_count: self.current_token_count,
+            max_token_count: self.max_token_count,
+            prompt_cache_size: self.prompt_tokens.len(),
+            sequence_cache_size: self.token_sequences.len(),
+            text_cache_size: self.token_text.len(),
+            memory_usage_mb: (self.current_token_count * 4) as f64 / (1024.0 * 1024.0), // 4 bytes per token
+        }
+    }
+
+    fn clear(&mut self) {
+        self.prompt_tokens.clear();
+        self.token_sequences.clear();
+        self.token_text.clear();
+        self.current_token_count = 0;
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TokenCacheStats {
+    current_token_count: usize,
+    max_token_count: usize,
+    prompt_cache_size: usize,
+    sequence_cache_size: usize,
+    text_cache_size: usize,
+    memory_usage_mb: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComprehensiveStats {
+    pub ai_stats: AiStats,
+    pub token_cache_stats: TokenCacheStats,
+}
+
+impl SystemMetrics {
+    fn new() -> Self {
+        let mut system = System::new_all();
+        system.refresh_all();
+        
+        let process_id = std::process::id();
+        let initial_memory_kb = if let Some(process) = system.process(sysinfo::Pid::from_u32(process_id)) {
+            process.memory()
+        } else {
+            0
+        };
+        
+        let now = Instant::now();
+        
+        Self {
+            system,
+            start_time: now,
+            last_update: now,
+            process_id,
+            initial_memory_kb,
+            peak_memory_kb: initial_memory_kb,
+            peak_cpu_percent: 0.0,
+            total_cpu_time: Duration::ZERO,
+            inference_memory_snapshots: Vec::with_capacity(1000),
+            cpu_usage_history: Vec::with_capacity(1000),
+        }
+    }
+    
+    fn capture_baseline(&mut self, context: &str) {
+        self.system.refresh_all();
+        let now = Instant::now();
+        
+        if let Some(process) = self.system.process(sysinfo::Pid::from_u32(self.process_id)) {
+            let memory_kb = process.memory();
+            let cpu_percent = process.cpu_usage();
+            
+            self.add_memory_snapshot(now, memory_kb, context);
+            self.add_cpu_snapshot(now, cpu_percent, context);
+            
+            if memory_kb > self.peak_memory_kb {
+                self.peak_memory_kb = memory_kb;
+            }
+            
+            if cpu_percent > self.peak_cpu_percent {
+                self.peak_cpu_percent = cpu_percent;
+            }
+        }
+        
+        self.last_update = now;
+    }
+    
+    fn add_memory_snapshot(&mut self, timestamp: Instant, process_memory_kb: u64, context: &str) {
+        let system_memory_kb = self.system.used_memory() / 1024;
+        let memory_delta_kb = process_memory_kb as i64 - self.initial_memory_kb as i64;
+        
+        let snapshot = MemorySnapshot {
+            timestamp,
+            process_memory_kb,
+            system_memory_kb,
+            memory_delta_kb,
+            context: context.to_string(),
+        };
+        
+        // Keep only last 100 snapshots for memory efficiency
+        if self.inference_memory_snapshots.len() >= 100 {
+            self.inference_memory_snapshots.remove(0);
+        }
+        
+        self.inference_memory_snapshots.push(snapshot);
+    }
+    
+    fn add_cpu_snapshot(&mut self, timestamp: Instant, cpu_percent: f32, context: &str) {
+        // Calculate average system load
+        let system_load_avg = self.system.cpus().iter()
+            .map(|cpu| cpu.cpu_usage())
+            .sum::<f32>() / self.system.cpus().len() as f32;
+        
+        let snapshot = CpuSnapshot {
+            timestamp,
+            cpu_percent,
+            system_load_avg,
+            context: context.to_string(),
+        };
+        
+        // Keep only last 100 snapshots for memory efficiency  
+        if self.cpu_usage_history.len() >= 100 {
+            self.cpu_usage_history.remove(0);
+        }
+        
+        self.cpu_usage_history.push(snapshot);
+    }
+    
+    fn get_current_metrics(&mut self) -> SystemMetricsSnapshot {
+        self.system.refresh_all();
+        
+        let process_memory_kb = if let Some(process) = self.system.process(sysinfo::Pid::from_u32(self.process_id)) {
+            process.memory()
+        } else {
+            0
+        };
+        
+        let cpu_count = self.system.cpus().len();
+        let system_memory_total_kb = self.system.total_memory() / 1024;
+        let system_memory_used_kb = self.system.used_memory() / 1024;
+        let system_memory_available_kb = system_memory_total_kb - system_memory_used_kb;
+        
+        SystemMetricsSnapshot {
+            uptime: self.start_time.elapsed(),
+            process_memory_mb: process_memory_kb as f64 / 1024.0,
+            process_memory_delta_mb: (process_memory_kb as i64 - self.initial_memory_kb as i64) as f64 / 1024.0,
+            peak_memory_mb: self.peak_memory_kb as f64 / 1024.0,
+            peak_cpu_percent: self.peak_cpu_percent,
+            system_memory_total_mb: system_memory_total_kb as f64 / 1024.0,
+            system_memory_used_mb: system_memory_used_kb as f64 / 1024.0,
+            system_memory_available_mb: system_memory_available_kb as f64 / 1024.0,
+            cpu_count,
+            memory_snapshots_count: self.inference_memory_snapshots.len(),
+            cpu_snapshots_count: self.cpu_usage_history.len(),
+        }
+    }
+    
+    fn log_inference_metrics(&mut self, context: &str, duration: Duration) {
+        self.capture_baseline(context);
+        
+        let metrics = self.get_current_metrics();
+        
+        info!("🔧 INFERENCE METRICS [{}]", context);
+        info!("   ⏱️  Duration: {:.3}s", duration.as_secs_f64());
+        info!("   💾 Process Memory: {:.1}MB (Δ{:+.1}MB)", 
+              metrics.process_memory_mb, metrics.process_memory_delta_mb);
+        info!("   🖥️  System Memory: {:.1}MB / {:.1}MB ({:.1}% used)", 
+              metrics.system_memory_used_mb, metrics.system_memory_total_mb,
+              (metrics.system_memory_used_mb / metrics.system_memory_total_mb) * 100.0);
+        info!("   🔥 Peak CPU: {:.1}%, CPUs: {}", 
+              metrics.peak_cpu_percent, metrics.cpu_count);
+        info!("   📊 Snapshots: {} memory, {} CPU", 
+              metrics.memory_snapshots_count, metrics.cpu_snapshots_count);
+    }
+    
+    fn get_detailed_report(&mut self) -> String {
+        let metrics = self.get_current_metrics();
+        
+        let mut report = String::new();
+        report.push_str("📈 DETAILED SYSTEM METRICS REPORT\n");
+        report.push_str("==================================\n");
+        report.push_str(&format!("Uptime: {:.1}s\n", metrics.uptime.as_secs_f64()));
+        report.push_str(&format!("Process Memory: {:.1}MB (Peak: {:.1}MB)\n", 
+                                metrics.process_memory_mb, metrics.peak_memory_mb));
+        report.push_str(&format!("Memory Delta: {:+.1}MB from baseline\n", 
+                                metrics.process_memory_delta_mb));
+        report.push_str(&format!("System Memory: {:.1}MB used / {:.1}MB total\n", 
+                                metrics.system_memory_used_mb, metrics.system_memory_total_mb));
+        report.push_str(&format!("Peak CPU Usage: {:.1}%\n", metrics.peak_cpu_percent));
+        report.push_str(&format!("CPU Cores: {}\n", metrics.cpu_count));
+        
+        // Add recent memory snapshots
+        if !self.inference_memory_snapshots.is_empty() {
+            report.push_str("\n📊 Recent Memory Snapshots:\n");
+            let recent_snapshots = self.inference_memory_snapshots.iter()
+                .rev()
+                .take(5)
+                .collect::<Vec<_>>();
+                
+            for snapshot in recent_snapshots.iter().rev() {
+                let elapsed = snapshot.timestamp.duration_since(self.start_time);
+                report.push_str(&format!("  [{:.1}s] {:.1}MB ({:+.1}MB) - {}\n",
+                                        elapsed.as_secs_f64(),
+                                        snapshot.process_memory_kb as f64 / 1024.0,
+                                        snapshot.memory_delta_kb as f64 / 1024.0,
+                                        snapshot.context));
+            }
+        }
+        
+        report
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SystemMetricsSnapshot {
+    pub uptime: Duration,
+    pub process_memory_mb: f64,
+    pub process_memory_delta_mb: f64,
+    pub peak_memory_mb: f64,
+    pub peak_cpu_percent: f32,
+    pub system_memory_total_mb: f64,
+    pub system_memory_used_mb: f64,
+    pub system_memory_available_mb: f64,
+    pub cpu_count: usize,
+    pub memory_snapshots_count: usize,
+    pub cpu_snapshots_count: usize,
 }
 
 impl InferenceEngine {
@@ -103,6 +460,8 @@ impl InferenceEngine {
             cache: Arc::new(Mutex::new(InferenceCache {
                 entries: LruCache::new(NonZeroUsize::new(100).unwrap()),
             })),
+            token_cache: Arc::new(Mutex::new(TokenCache::new(1_000_000))), // 1M tokens
+            system_metrics: Arc::new(Mutex::new(SystemMetrics::new())),
             model_path: config.primary_model.clone(),
             start_time: Instant::now(),
             memory_limit_mb: 2048, // 2GB default limit
@@ -273,6 +632,11 @@ impl InferenceEngine {
     /// Perform the actual inference with CPU-bound work in blocking task
     #[instrument(skip(self, config), fields(prompt_len = prompt.len()))]
     async fn perform_inference(&self, prompt: &str, config: &AiConfig) -> CodexResult<String> {
+        // Capture baseline metrics before inference
+        {
+            let mut metrics = self.system_metrics.lock().await;
+            metrics.capture_baseline("pre_inference");
+        }
         // Clone necessary data for the blocking task
         let tokenizer_clone = Arc::clone(&self.tokenizer.as_ref().unwrap());
         let prompt_owned = prompt.to_string();
@@ -284,25 +648,43 @@ impl InferenceEngine {
             return Err(crate::CodexError::ai_inference("Model not loaded"));
         }
 
-        // Perform CPU-bound tokenization in a blocking task
-        let tokens = tokio::task::spawn_blocking(move || {
-            debug!("Starting tokenization on blocking thread");
-            let encoding = tokenizer_clone.encode(prompt_owned.as_str(), true)
-                .map_err(|e| crate::CodexError::ai_inference(format!("Tokenization failed: {}", e)))?;
-            
-            let tokens = encoding.get_ids().to_vec();
-            info!("Tokenized prompt: {} tokens", tokens.len());
-            
-            // Check if prompt is too long
-            if tokens.len() > max_tokens {
-                return Err(crate::CodexError::validation(
-                    format!("Prompt too long: {} tokens, max: {}", tokens.len(), max_tokens)
-                ));
+        // Check token cache first
+        let prompt_owned_for_cache = prompt_owned.clone();
+        let tokens = {
+            let mut token_cache = self.token_cache.lock().await;
+            if let Some(cached_tokens) = token_cache.get_prompt_tokens(&prompt_owned_for_cache) {
+                info!("Using cached tokens for prompt: {} tokens", cached_tokens.len());
+                cached_tokens
+            } else {
+                drop(token_cache); // Release lock before expensive operation
+                
+                // Perform CPU-bound tokenization in a blocking task
+                let tokens = tokio::task::spawn_blocking(move || {
+                    debug!("Starting tokenization on blocking thread");
+                    let encoding = tokenizer_clone.encode(prompt_owned.as_str(), true)
+                        .map_err(|e| crate::CodexError::ai_inference(format!("Tokenization failed: {}", e)))?;
+                    
+                    let tokens = encoding.get_ids().to_vec();
+                    info!("Tokenized prompt: {} tokens", tokens.len());
+                    
+                    // Check if prompt is too long
+                    if tokens.len() > max_tokens {
+                        return Err(crate::CodexError::validation(
+                            format!("Prompt too long: {} tokens, max: {}", tokens.len(), max_tokens)
+                        ));
+                    }
+                    
+                    Ok::<Vec<u32>, crate::CodexError>(tokens)
+                }).await
+                .map_err(|e| crate::CodexError::internal(format!("Tokenization task failed: {}", e)))??;
+                
+                // Cache the tokenized prompt
+                let mut token_cache = self.token_cache.lock().await;
+                token_cache.cache_prompt_tokens(&prompt_owned_for_cache, tokens.clone());
+                
+                tokens
             }
-            
-            Ok::<Vec<u32>, crate::CodexError>(tokens)
-        }).await
-        .map_err(|e| crate::CodexError::internal(format!("Tokenization task failed: {}", e)))??;
+        };
 
         // Perform CPU-bound inference in a blocking task
         let tokenizer_for_response = Arc::clone(&self.tokenizer.as_ref().unwrap());
@@ -320,6 +702,14 @@ impl InferenceEngine {
             Self::generate_response_from_tokens_blocking(&tokens, &tokenizer_for_response, temperature, top_p)
         }).await
         .map_err(|e| crate::CodexError::internal(format!("Inference task failed: {}", e)))??;
+
+        // Capture metrics after inference and log detailed report
+        {
+            let start_time = self.start_time;
+            let inference_duration = start_time.elapsed();
+            let mut metrics = self.system_metrics.lock().await;
+            metrics.log_inference_metrics("post_inference", inference_duration);
+        }
 
         Ok(response)
     }
@@ -557,6 +947,62 @@ impl InferenceEngine {
         })
     }
 
+    /// Get detailed token cache statistics
+    pub async fn get_token_cache_stats(&self) -> CodexResult<TokenCacheStats> {
+        let token_cache = self.token_cache.lock().await;
+        Ok(token_cache.get_stats())
+    }
+
+    /// Get comprehensive inference statistics including token cache
+    pub async fn get_comprehensive_stats(&self) -> CodexResult<ComprehensiveStats> {
+        let ai_stats = self.get_stats().await?;
+        let token_cache_stats = self.get_token_cache_stats().await?;
+        
+        Ok(ComprehensiveStats {
+            ai_stats,
+            token_cache_stats,
+        })
+    }
+
+    /// Get current system metrics snapshot
+    pub async fn get_system_metrics(&self) -> CodexResult<SystemMetricsSnapshot> {
+        let mut metrics = self.system_metrics.lock().await;
+        Ok(metrics.get_current_metrics())
+    }
+
+    /// Get detailed system metrics report
+    pub async fn get_system_metrics_report(&self) -> CodexResult<String> {
+        let mut metrics = self.system_metrics.lock().await;
+        Ok(metrics.get_detailed_report())
+    }
+
+    /// Log current system status with detailed metrics
+    pub async fn log_system_status(&self) -> CodexResult<()> {
+        let mut metrics = self.system_metrics.lock().await;
+        let current_metrics = metrics.get_current_metrics();
+        
+        info!("🖥️  SYSTEM STATUS REPORT");
+        info!("   ⏱️  Uptime: {:.1}s", current_metrics.uptime.as_secs_f64());
+        info!("   💾 Process Memory: {:.1}MB (Peak: {:.1}MB)", 
+              current_metrics.process_memory_mb, current_metrics.peak_memory_mb);
+        info!("   📈 Memory Delta: {:+.1}MB from start", current_metrics.process_memory_delta_mb);
+        info!("   🖥️  System Memory: {:.1}% used ({:.1}MB / {:.1}MB)", 
+              (current_metrics.system_memory_used_mb / current_metrics.system_memory_total_mb) * 100.0,
+              current_metrics.system_memory_used_mb, current_metrics.system_memory_total_mb);
+        info!("   🔥 Peak CPU: {:.1}% (System: {} cores)", 
+              current_metrics.peak_cpu_percent, current_metrics.cpu_count);
+        
+        // Log token cache status
+        let token_cache = self.token_cache.lock().await;
+        let token_stats = token_cache.get_stats();
+        info!("   🧠 Token Cache: {:.1}MB ({} tokens, {:.1}% full)", 
+              token_stats.memory_usage_mb, 
+              token_stats.current_token_count,
+              (token_stats.current_token_count as f64 / token_stats.max_token_count as f64) * 100.0);
+        
+        Ok(())
+    }
+
     /// Check if model is loaded and ready
     pub fn is_ready(&self) -> bool {
         self.tokenizer.is_some() && !self.model_path.is_empty()
@@ -670,7 +1116,7 @@ impl InferenceEngine {
             info!("Memory usage ({:.1}MB) exceeds threshold ({:.1}MB), performing cleanup", 
                   memory_usage, threshold);
             
-            // Clear cache of old entries
+            // Clear response cache of old entries
             let mut cache = self.cache.lock().await;
             let now = Instant::now();
             let cutoff = now - Duration::from_secs(300); // Remove entries older than 5 minutes
@@ -688,7 +1134,33 @@ impl InferenceEngine {
                 cache.entries.pop(&key);
             }
             
-            info!("Cache cleanup completed, {} entries remaining", cache.entries.len());
+            let remaining_cache_entries = cache.entries.len();
+            drop(cache);
+            
+            // Clean up token cache if using too much memory
+            let mut token_cache = self.token_cache.lock().await;
+            let token_stats = token_cache.get_stats();
+            if token_stats.memory_usage_mb > 100.0 { // If using more than 100MB for tokens
+                // Remove 25% of oldest entries
+                let entries_to_remove = (token_stats.prompt_cache_size + 
+                                       token_stats.sequence_cache_size + 
+                                       token_stats.text_cache_size) / 4;
+                
+                for _ in 0..entries_to_remove {
+                    if token_cache.prompt_tokens.pop_lru().is_none() &&
+                       token_cache.token_sequences.pop_lru().is_none() &&
+                       token_cache.token_text.pop_lru().is_none() {
+                        break;
+                    }
+                }
+                
+                let new_stats = token_cache.get_stats();
+                info!("Token cache cleanup: reduced from {:.1}MB to {:.1}MB ({} tokens)", 
+                      token_stats.memory_usage_mb, new_stats.memory_usage_mb, new_stats.current_token_count);
+            }
+            
+            info!("Cache cleanup completed: {} response entries, {:.1}MB token cache", 
+                  remaining_cache_entries, token_cache.get_stats().memory_usage_mb);
         }
         
         Ok(())
@@ -713,9 +1185,18 @@ impl InferenceEngine {
     pub async fn shutdown(&mut self) -> CodexResult<()> {
         info!("Shutting down inference engine");
         
-        // Clear cache
+        // Clear response cache
         let mut cache = self.cache.lock().await;
         cache.entries.clear();
+        drop(cache);
+        
+        // Clear token cache
+        let mut token_cache = self.token_cache.lock().await;
+        let token_stats = token_cache.get_stats();
+        info!("Clearing token cache: {} tokens ({:.1}MB)", 
+              token_stats.current_token_count, token_stats.memory_usage_mb);
+        token_cache.clear();
+        drop(token_cache);
         
         // Unload model
         self.model = None;
