@@ -1,5 +1,6 @@
 use sqlx::SqlitePool;
-use crate::{CodexResult, Document};
+use crate::CodexResult;
+use super::models::Document;
 
 pub struct Search;
 
@@ -16,8 +17,8 @@ impl Search {
         
         let sql = r#"
             SELECT d.* FROM documents d
-            JOIN documents_fts fts ON d.rowid = fts.rowid
-            WHERE fts MATCH ? AND d.is_deleted = 0
+            JOIN documents_fts ON d.rowid = documents_fts.rowid
+            WHERE documents_fts MATCH ? AND d.is_deleted = 0
             ORDER BY rank
             LIMIT ?
         "#;

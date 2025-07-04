@@ -156,3 +156,10 @@ impl From<anyhow::Error> for CodexError {
         Self::Internal(err.to_string())
     }
 }
+
+/// Conversion from bincode errors
+impl From<Box<bincode::ErrorKind>> for CodexError {
+    fn from(err: Box<bincode::ErrorKind>) -> Self {
+        Self::Internal(format!("Bincode serialization error: {}", err))
+    }
+}

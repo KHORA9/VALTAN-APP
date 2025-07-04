@@ -1,7 +1,6 @@
 //! Database query operations for Codex Core
 
-use sqlx::{SqlitePool, Row, query, query_as, query_scalar};
-use sqlx::sqlite::SqliteRow;
+use sqlx::{SqlitePool, Row, query, query_as};
 use chrono::Utc;
 
 use crate::{CodexError, CodexResult};
@@ -97,7 +96,7 @@ impl DocumentQueries {
     pub async fn update(pool: &SqlitePool, document: &Document) -> CodexResult<()> {
         let updated_at = Utc::now();
         
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE documents SET
                 title = ?, content = ?, summary = ?, author = ?, source = ?,
@@ -106,29 +105,29 @@ impl DocumentQueries {
                 updated_at = ?, last_accessed = ?, view_count = ?, is_favorite = ?,
                 is_archived = ?, is_deleted = ?
             WHERE id = ?
-            "#,
-            document.title,
-            document.content,
-            document.summary,
-            document.author,
-            document.source,
-            document.url,
-            document.content_type,
-            document.category,
-            document.tags,
-            document.language,
-            document.reading_time,
-            document.difficulty_level,
-            document.file_size,
-            document.file_hash,
-            updated_at,
-            document.last_accessed,
-            document.view_count,
-            document.is_favorite,
-            document.is_archived,
-            document.is_deleted,
-            document.id
+            "#
         )
+        .bind(&document.title)
+        .bind(&document.content)
+        .bind(&document.summary)
+        .bind(&document.author)
+        .bind(&document.source)
+        .bind(&document.url)
+        .bind(&document.content_type)
+        .bind(&document.category)
+        .bind(&document.tags)
+        .bind(&document.language)
+        .bind(document.reading_time)
+        .bind(document.difficulty_level)
+        .bind(document.file_size)
+        .bind(&document.file_hash)
+        .bind(updated_at.to_rfc3339())
+        .bind(&document.last_accessed)
+        .bind(document.view_count)
+        .bind(document.is_favorite)
+        .bind(document.is_archived)
+        .bind(document.is_deleted)
+        .bind(&document.id)
         .execute(pool)
         .await?;
 
@@ -139,11 +138,11 @@ impl DocumentQueries {
     pub async fn delete(pool: &SqlitePool, id: &str) -> CodexResult<()> {
         let updated_at = Utc::now();
         
-        sqlx::query!(
-            "UPDATE documents SET is_deleted = true, updated_at = ? WHERE id = ?",
-            updated_at,
-            id
+        sqlx::query(
+            "UPDATE documents SET is_deleted = true, updated_at = ? WHERE id = ?"
         )
+        .bind(updated_at.to_rfc3339())
+        .bind(id)
         .execute(pool)
         .await?;
 
@@ -155,7 +154,7 @@ impl DocumentQueries {
         pool: &SqlitePool,
         query: &str,
         limit: i64,
-        offset: i64,
+        _offset: i64,
     ) -> CodexResult<Vec<Document>> {
         let documents = query_as::<_, Document>(
             r#"
@@ -181,18 +180,17 @@ impl DocumentQueries {
         limit: i64,
         offset: i64,
     ) -> CodexResult<Vec<Document>> {
-        let documents = sqlx::query_as!(
-            Document,
+        let documents = sqlx::query_as::<_, Document>(
             r#"
             SELECT * FROM documents
             WHERE category = ? AND is_deleted = false
             ORDER BY created_at DESC
             LIMIT ? OFFSET ?
-            "#,
-            category,
-            limit,
-            offset
+            "#
         )
+        .bind(category)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await?;
 
@@ -201,16 +199,15 @@ impl DocumentQueries {
 
     /// Get recent documents
     pub async fn get_recent(pool: &SqlitePool, limit: i64) -> CodexResult<Vec<Document>> {
-        let documents = sqlx::query_as!(
-            Document,
+        let documents = sqlx::query_as::<_, Document>(
             r#"
             SELECT * FROM documents
             WHERE is_deleted = false
             ORDER BY created_at DESC
             LIMIT ?
-            "#,
-            limit
+            "#
         )
+        .bind(limit)
         .fetch_all(pool)
         .await?;
 
@@ -219,16 +216,15 @@ impl DocumentQueries {
 
     /// Get favorite documents
     pub async fn get_favorites(pool: &SqlitePool, limit: i64) -> CodexResult<Vec<Document>> {
-        let documents = sqlx::query_as!(
-            Document,
+        let documents = sqlx::query_as::<_, Document>(
             r#"
             SELECT * FROM documents
             WHERE is_favorite = true AND is_deleted = false
             ORDER BY updated_at DESC
             LIMIT ?
-            "#,
-            limit
+            "#
         )
+        .bind(limit)
         .fetch_all(pool)
         .await?;
 
@@ -239,15 +235,15 @@ impl DocumentQueries {
     pub async fn update_access(pool: &SqlitePool, id: &str) -> CodexResult<()> {
         let now = Utc::now();
         
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE documents
             SET view_count = view_count + 1, last_accessed = ?
             WHERE id = ?
-            "#,
-            now,
-            id
+            "#
         )
+        .bind(now.to_rfc3339())
+        .bind(id)
         .execute(pool)
         .await?;
 
@@ -261,24 +257,24 @@ pub struct EmbeddingQueries;
 impl EmbeddingQueries {
     /// Create a new embedding
     pub async fn create(pool: &SqlitePool, embedding: &Embedding) -> CodexResult<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO embeddings (
                 id, document_id, vector, dimensions, model, chunk_index,
                 text_chunk, start_position, end_position, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-            embedding.id,
-            embedding.document_id,
-            embedding.vector,
-            embedding.dimensions,
-            embedding.model,
-            embedding.chunk_index,
-            embedding.text_chunk,
-            embedding.start_position,
-            embedding.end_position,
-            embedding.created_at
+            "#
         )
+        .bind(&embedding.id)
+        .bind(&embedding.document_id)
+        .bind(&embedding.vector)
+        .bind(embedding.dimensions)
+        .bind(&embedding.model)
+        .bind(embedding.chunk_index)
+        .bind(&embedding.text_chunk)
+        .bind(embedding.start_position)
+        .bind(embedding.end_position)
+        .bind(&embedding.created_at)
         .execute(pool)
         .await?;
 
@@ -290,11 +286,10 @@ impl EmbeddingQueries {
         pool: &SqlitePool,
         document_id: &str,
     ) -> CodexResult<Vec<Embedding>> {
-        let embeddings = sqlx::query_as!(
-            Embedding,
-            "SELECT * FROM embeddings WHERE document_id = ? ORDER BY chunk_index",
-            document_id
+        let embeddings = sqlx::query_as::<_, Embedding>(
+            "SELECT * FROM embeddings WHERE document_id = ? ORDER BY chunk_index"
         )
+        .bind(document_id)
         .fetch_all(pool)
         .await?;
 
@@ -303,10 +298,10 @@ impl EmbeddingQueries {
 
     /// Delete embeddings for a document
     pub async fn delete_by_document(pool: &SqlitePool, document_id: &str) -> CodexResult<()> {
-        sqlx::query!(
-            "DELETE FROM embeddings WHERE document_id = ?",
-            document_id
+        sqlx::query(
+            "DELETE FROM embeddings WHERE document_id = ?"
         )
+        .bind(document_id)
         .execute(pool)
         .await?;
 
@@ -349,25 +344,25 @@ impl EmbeddingQueries {
         let vector_blob = bincode::serialize(&vector)
             .map_err(|e| CodexError::Database(sqlx::Error::Decode(Box::new(e))))?;
         
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO embeddings (
                 id, document_id, vector, vector_blob, dimensions, model, chunk_index,
                 text_chunk, start_position, end_position, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-            embedding.id,
-            embedding.document_id,
-            embedding.vector,
-            vector_blob,
-            embedding.dimensions,
-            embedding.model,
-            embedding.chunk_index,
-            embedding.text_chunk,
-            embedding.start_position,
-            embedding.end_position,
-            embedding.created_at
+            "#
         )
+        .bind(&embedding.id)
+        .bind(&embedding.document_id)
+        .bind(&embedding.vector)
+        .bind(vector_blob)
+        .bind(embedding.dimensions)
+        .bind(&embedding.model)
+        .bind(embedding.chunk_index)
+        .bind(&embedding.text_chunk)
+        .bind(embedding.start_position)
+        .bind(embedding.end_position)
+        .bind(&embedding.created_at)
         .execute(pool)
         .await?;
 
@@ -378,25 +373,27 @@ impl EmbeddingQueries {
     pub async fn get_cached_vectors(pool: &SqlitePool, model: &str, limit: Option<i64>) -> CodexResult<Vec<(String, Vec<f32>)>> {
         let limit = limit.unwrap_or(1000);
         
-        let rows = sqlx::query!(
+        let rows = sqlx::query(
             r#"
             SELECT document_id, vector_blob, access_count
             FROM vector_cache
             WHERE model = ?
             ORDER BY access_count DESC, last_accessed DESC
             LIMIT ?
-            "#,
-            model,
-            limit
+            "#
         )
+        .bind(model)
+        .bind(limit)
         .fetch_all(pool)
         .await?;
 
         let mut result = Vec::new();
         for row in rows {
-            let vector = bincode::deserialize::<Vec<f32>>(&row.vector_blob)
+            let document_id: String = row.get("document_id");
+            let vector_blob: Vec<u8> = row.get("vector_blob");
+            let vector = bincode::deserialize::<Vec<f32>>(&vector_blob)
                 .map_err(|e| CodexError::Database(sqlx::Error::Decode(Box::new(e))))?;
-            result.push((row.document_id, vector));
+            result.push((document_id, vector));
         }
 
         Ok(result)
@@ -406,15 +403,15 @@ impl EmbeddingQueries {
     pub async fn update_cache_access(pool: &SqlitePool, document_id: &str) -> CodexResult<()> {
         let now = Utc::now();
         
-        sqlx::query!(
+        sqlx::query(
             r#"
             UPDATE vector_cache
             SET access_count = access_count + 1, last_accessed = ?
             WHERE document_id = ?
-            "#,
-            now,
-            document_id
+            "#
         )
+        .bind(now.to_rfc3339())
+        .bind(document_id)
         .execute(pool)
         .await?;
 
@@ -431,20 +428,20 @@ impl EmbeddingQueries {
         let vector_blob = bincode::serialize(vector)
             .map_err(|e| CodexError::Database(sqlx::Error::Decode(Box::new(e))))?;
         
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT OR REPLACE INTO vector_cache (
                 id, document_id, vector_blob, dimensions, model, access_count, last_accessed, created_at
             ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-            "#,
-            uuid::Uuid::new_v4().to_string(),
-            document_id,
-            vector_blob,
-            vector.len() as i64,
-            model,
-            Utc::now().to_rfc3339(),
-            Utc::now().to_rfc3339()
+            "#
         )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(document_id)
+        .bind(vector_blob)
+        .bind(vector.len() as i64)
+        .bind(model)
+        .bind(Utc::now().to_rfc3339())
+        .bind(Utc::now().to_rfc3339())
         .execute(pool)
         .await?;
 
@@ -453,7 +450,7 @@ impl EmbeddingQueries {
     
     /// Clean up old cache entries
     pub async fn cleanup_cache(pool: &SqlitePool, max_entries: i64) -> CodexResult<()> {
-        sqlx::query!(
+        sqlx::query(
             r#"
             DELETE FROM vector_cache
             WHERE id NOT IN (
@@ -461,9 +458,9 @@ impl EmbeddingQueries {
                 ORDER BY access_count DESC, last_accessed DESC
                 LIMIT ?
             )
-            "#,
-            max_entries
+            "#
         )
+        .bind(max_entries)
         .execute(pool)
         .await?;
 
@@ -477,11 +474,10 @@ pub struct SettingQueries;
 impl SettingQueries {
     /// Get setting by key
     pub async fn get(pool: &SqlitePool, key: &str) -> CodexResult<Option<Setting>> {
-        let setting = sqlx::query_as!(
-            Setting,
-            "SELECT * FROM settings WHERE key = ?",
-            key
+        let setting = sqlx::query_as::<_, Setting>(
+            "SELECT * FROM settings WHERE key = ?"
         )
+        .bind(key)
         .fetch_optional(pool)
         .await?;
 
@@ -550,18 +546,17 @@ impl SearchQueries {
         
         let start = std::time::Instant::now();
         
-        let documents = sqlx::query_as!(
-            Document,
+        let documents = sqlx::query_as::<_, Document>(
             r#"
             SELECT d.* FROM documents d
             JOIN documents_fts fts ON d.rowid = fts.rowid
             WHERE fts MATCH ? AND d.is_deleted = false
             ORDER BY rank
             LIMIT ?
-            "#,
-            sanitized_query,
-            limit
+            "#
         )
+        .bind(sanitized_query)
+        .bind(limit)
         .fetch_all(pool)
         .await?;
         
@@ -590,7 +585,7 @@ impl SearchQueries {
         
         let start = std::time::Instant::now();
         
-        let rows = sqlx::query!(
+        let rows = sqlx::query(
             r#"
             SELECT d.*, 
                    bm25(documents_fts, 10.0, 5.0, 1.0, 1.0, 3.0, 2.0) as rank_score,
@@ -600,11 +595,11 @@ impl SearchQueries {
             WHERE fts MATCH ? AND d.is_deleted = false
             ORDER BY rank_score DESC
             LIMIT ? OFFSET ?
-            "#,
-            sanitized_query,
-            limit,
-            offset
+            "#
         )
+        .bind(sanitized_query)
+        .bind(limit)
+        .bind(offset)
         .fetch_all(pool)
         .await?;
         
@@ -619,32 +614,32 @@ impl SearchQueries {
         let mut results = Vec::new();
         for row in rows {
             let document = Document {
-                id: row.id,
-                title: row.title,
-                content: row.content,
-                summary: row.summary,
-                author: row.author,
-                source: row.source,
-                url: row.url,
-                content_type: row.content_type,
-                category: row.category,
-                tags: row.tags,
-                language: row.language,
-                reading_time: row.reading_time,
-                difficulty_level: row.difficulty_level,
-                file_size: row.file_size,
-                file_hash: row.file_hash,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-                last_accessed: row.last_accessed,
-                view_count: row.view_count,
-                is_favorite: row.is_favorite,
-                is_archived: row.is_archived,
-                is_deleted: row.is_deleted,
+                id: row.get("id"),
+                title: row.get("title"),
+                content: row.get("content"),
+                summary: row.get("summary"),
+                author: row.get("author"),
+                source: row.get("source"),
+                url: row.get("url"),
+                content_type: row.get("content_type"),
+                category: row.get("category"),
+                tags: row.get("tags"),
+                language: row.get("language"),
+                reading_time: row.get("reading_time"),
+                difficulty_level: row.get("difficulty_level"),
+                file_size: row.get("file_size"),
+                file_hash: row.get("file_hash"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                last_accessed: row.get("last_accessed"),
+                view_count: row.get("view_count"),
+                is_favorite: row.get("is_favorite"),
+                is_archived: row.get("is_archived"),
+                is_deleted: row.get("is_deleted"),
             };
             
-            let score = row.rank_score.unwrap_or(0.0);
-            results.push((document, score));
+            let score: Option<f64> = row.get("rank_score");
+            results.push((document, score.unwrap_or(0.0)));
         }
         
         Ok(results)
