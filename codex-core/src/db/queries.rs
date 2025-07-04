@@ -92,6 +92,47 @@ impl DocumentQueries {
         }
     }
 
+    /// Get document by file hash (for duplicate detection)
+    pub async fn get_by_file_hash(pool: &SqlitePool, file_hash: &str) -> CodexResult<Option<Document>> {
+        let row = sqlx::query(
+            "SELECT * FROM documents WHERE file_hash = ? AND is_deleted = false"
+        )
+        .bind(file_hash)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| CodexError::Database(e))?;
+
+        if let Some(row) = row {
+            let document = Document {
+                id: row.get("id"),
+                title: row.get("title"),
+                content: row.get("content"),
+                summary: row.get("summary"),
+                author: row.get("author"),
+                source: row.get("source"),
+                url: row.get("url"),
+                content_type: row.get("content_type"),
+                category: row.get("category"),
+                tags: row.get("tags"),
+                language: row.get("language"),
+                reading_time: row.get("reading_time"),
+                difficulty_level: row.get("difficulty_level"),
+                file_size: row.get("file_size"),
+                file_hash: row.get("file_hash"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+                last_accessed: row.get("last_accessed"),
+                view_count: row.get("view_count"),
+                is_favorite: row.get("is_favorite"),
+                is_archived: row.get("is_archived"),
+                is_deleted: row.get("is_deleted"),
+            };
+            Ok(Some(document))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Update document
     pub async fn update(pool: &SqlitePool, document: &Document) -> CodexResult<()> {
         let updated_at = Utc::now();

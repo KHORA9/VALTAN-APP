@@ -115,6 +115,10 @@ metal = ["ai-metal"]
 name = "download-model"
 path = "src/bin/download-model.rs"
 
+[[bin]]
+name = "vault-cli"
+path = "src/bin/vault-cli.rs"
+
 [[example]]
 name = "benchmark"
 path = "examples/benchmark.rs"
